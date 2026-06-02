@@ -1,0 +1,15 @@
+area_sqft
+log_area
+township_area
+amenity_score
+has_clubhouse
+has_school
+has_hospital
+has_mall
+has_park
+has_pool
+has_gym
+location
+sub_area
+property_type
+company_name

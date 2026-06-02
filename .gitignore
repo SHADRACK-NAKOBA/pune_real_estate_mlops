@@ -1,0 +1,42 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# MLflow
+mlflow.db
+mlruns/
+mlflow_runs/
+
+# Models
+models/best_model.pkl
+models/pycaret_best.pkl
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data raw
+data/raw/
+
+# Environment variables
+.env
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+
+# DVC cache
+.dvc/cache/
+.dvc/tmp/

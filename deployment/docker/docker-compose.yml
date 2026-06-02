@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile
+    container_name: pune_re_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../models:/app/models:ro
+      - ../../data:/app/data:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  mlflow:
+    image: python:3.10-slim
+    container_name: pune_re_mlflow
+    command: >
+      bash -c "pip install mlflow && 
+               mlflow server --host 0.0.0.0 --port 5000 
+               --backend-store-uri /mlruns 
+               --default-artifact-root /mlruns"
+    ports:
+      - "5001:5000"
+    volumes:
+      - ../../mlflow_runs:/mlruns
+    restart: unless-stopped

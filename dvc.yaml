@@ -1,0 +1,35 @@
+stages:
+  preprocess:
+    cmd: python src/data/preprocess.py
+    deps:
+      - src/data/preprocess.py
+      - data/raw/Pune_Real_Estate_Data.xlsx
+      - data/raw/data_cleaned.csv
+    outs:
+      - data/processed/pune_features.csv
+    desc: "Clean raw data and engineer features"
+
+  train:
+    cmd: python src/models/train.py
+    deps:
+      - src/models/train.py
+      - data/processed/pune_features.csv
+    outs:
+      - models/best_model.pkl
+      - models/feature_columns.txt
+    metrics:
+      - models/metrics.json:
+          cache: false
+    desc: "Train and evaluate models with MLflow tracking"
+
+  pycaret:
+    cmd: python src/models/pycaret_train.py
+    deps:
+      - src/models/pycaret_train.py
+      - data/processed/pune_features.csv
+    outs:
+      - models/pycaret_best.pkl
+    metrics:
+      - models/pycaret_leaderboard.csv:
+          cache: false
+    desc: "AutoML with PyCaret"
