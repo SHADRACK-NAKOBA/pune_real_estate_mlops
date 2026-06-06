@@ -231,7 +231,7 @@ jobs:
           fi
 
       - name: Send Slack notification
-        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        continue-on-error: true
         uses: slackapi/slack-github-action@v1.26.0
         with:
           payload: |
