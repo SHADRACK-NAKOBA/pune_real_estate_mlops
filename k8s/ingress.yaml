@@ -17,8 +17,7 @@ spec:
   #       - api.yourdomain.com
   #     secretName: pune-api-tls
   rules:
-    - host: api.yourdomain.com    # Replace with your actual domain
-      http:
+    - http:                       # No host = catch-all (works with any hostname/IP)
         paths:
           - path: /
             pathType: Prefix
