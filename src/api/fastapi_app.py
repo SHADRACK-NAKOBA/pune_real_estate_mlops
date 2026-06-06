@@ -12,12 +12,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
-try:
-    from src.api.middleware import setup_middleware
-    _HAS_MIDDLEWARE = True
-except ImportError:
-    _HAS_MIDDLEWARE = False
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # ─────────────────────────────────────────────
 # LOAD MODEL
@@ -91,8 +86,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-if _HAS_MIDDLEWARE:
-    setup_middleware(app)   # adds /metrics endpoint and JSON request logging
+# Prometheus metrics — /metrics endpoint
+Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    excluded_handlers=["/health", "/metrics"],
+).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+# Optional structured JSON request logging (fails silently if package missing)
+try:
+    from src.api.middleware import setup_logging
+    setup_logging(app)
+except Exception:
+    pass
 
 
 @app.on_event("startup")
