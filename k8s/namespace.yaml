@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pune-api
+  labels:
+    app: pune-real-estate-api
+    environment: production

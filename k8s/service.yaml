@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pune-api-service
+  namespace: pune-api
+  labels:
+    app: pune-api
+spec:
+  selector:
+    app: pune-api
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP    # Ingress handles external access; ClusterIP is internal only

@@ -6,9 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  AWS_REGION:       us-east-1
+  ECR_REPOSITORY:   pune-real-estate-api
+  ECS_CLUSTER:      pune-api-cluster
+  ECS_SERVICE:      pune-api-service
+  EKS_CLUSTER:      pune-api-eks
+  CONTAINER_NAME:   pune-api
+
 jobs:
 
-  # ── JOB 1: Test ──
+  # ── JOB 1: Test ──────────────────────────────────────────────────────────────
   test:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -24,14 +32,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install fastapi uvicorn pydantic joblib numpy pandas pytest httpx scikit-learn==1.7.2 openpyxl mlflow
+          pip install fastapi uvicorn pydantic joblib numpy pandas pytest httpx \
+                      scikit-learn==1.7.2 openpyxl mlflow \
+                      prometheus-fastapi-instrumentator python-json-logger
 
       - name: Run preprocessing
         run: python src/data/preprocess.py
 
       - name: Train model
-        run: |
-          MLFLOW_TRACKING_URI="sqlite:///mlflow.db" python src/models/train.py
+        run: MLFLOW_TRACKING_URI="sqlite:///mlflow.db" python src/models/train.py
 
       - name: Run tests
         run: |
@@ -41,12 +50,14 @@ jobs:
             echo "No tests found - skipping"
           fi
 
-  # ── JOB 2: Build and Push Docker Image ──
+  # ── JOB 2: Build → Docker Hub + ECR ─────────────────────────────────────────
   build:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      image_tag: ${{ github.sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -54,13 +65,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # ── Push to Docker Hub ──
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push to Docker Hub
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -71,7 +83,31 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── JOB 3: Deploy to EC2 ──
+      # ── Push to Amazon ECR ──
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push to ECR
+        run: |
+          ECR_IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/pune-real-estate-api:${{ github.sha }}
+          docker tag  ${{ secrets.DOCKERHUB_USERNAME }}/pune-real-estate-api:${{ github.sha }} \
+                      ${ECR_IMAGE}:latest
+          docker tag  ${{ secrets.DOCKERHUB_USERNAME }}/pune-real-estate-api:${{ github.sha }} \
+                      ${ECR_IMAGE}:${{ github.sha }}
+          docker push ${ECR_IMAGE}:latest
+          docker push ${ECR_IMAGE}:${{ github.sha }}
+          echo "ECR_IMAGE=${ECR_IMAGE}" >> $GITHUB_ENV
+
+  # ── JOB 3: Deploy to EC2 (Supervisor) ────────────────────────────────────────
   deploy-ec2:
     name: Deploy to AWS EC2
     runs-on: ubuntu-latest
@@ -81,10 +117,10 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host:     ${{ secrets.EC2_HOST }}
           username: ubuntu
-          key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 120s
+          key:      ${{ secrets.EC2_SSH_KEY }}
+          timeout:  120s
           script: |
             set -e
             cd ~/pune_real_estate_mlops
@@ -94,4 +130,133 @@ jobs:
             sudo supervisorctl restart pune_api
             sleep 5
             curl -f http://localhost:8000/health
-            echo "Deployment complete"
+            echo "EC2 deployment complete"
+
+  # ── JOB 4: Deploy to ECS Fargate ─────────────────────────────────────────────
+  deploy-ecs:
+    name: Deploy to AWS ECS Fargate
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Render ECS task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: deployment/ecs/task-definition.json
+          container-name:  ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition:  ${{ steps.task-def.outputs.task-definition }}
+          service:          ${{ env.ECS_SERVICE }}
+          cluster:          ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+  # ── JOB 5: Deploy to EKS (Kubernetes) ────────────────────────────────────────
+  deploy-eks:
+    name: Deploy to AWS EKS
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Rolling update — set new image
+        run: |
+          ECR_IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+          kubectl set image deployment/pune-api \
+            pune-api=${ECR_IMAGE} \
+            -n pune-api
+          kubectl rollout status deployment/pune-api -n pune-api --timeout=180s
+
+      - name: Verify rollout
+        run: |
+          kubectl get pods -n pune-api -l app=pune-api
+          kubectl get svc  -n pune-api
+
+  # ── JOB 6: Notify deployment status ──────────────────────────────────────────
+  notify:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy-ec2, deploy-ecs, deploy-eks]
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Set status message
+        id: status
+        run: |
+          EC2="${{ needs.deploy-ec2.result }}"
+          ECS="${{ needs.deploy-ecs.result }}"
+          EKS="${{ needs.deploy-eks.result }}"
+          if [[ "$EC2" == "success" && ("$ECS" == "success" || "$ECS" == "skipped") && ("$EKS" == "success" || "$EKS" == "skipped") ]]; then
+            echo "message=All deployments succeeded for commit ${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+          else
+            echo "message=Deployment FAILED — EC2:${EC2} ECS:${ECS} EKS:${EKS} — commit ${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "Pune API Deploy: ${{ steps.status.outputs.message }}",
+              "attachments": [{
+                "color": "${{ steps.status.outputs.color }}",
+                "fields": [
+                  { "title": "Branch",     "value": "${{ github.ref_name }}", "short": true },
+                  { "title": "Commit",     "value": "${{ github.sha }}", "short": true },
+                  { "title": "Triggered by", "value": "${{ github.actor }}", "short": true }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Print summary
+        run: |
+          echo "=========================================="
+          echo "  Pune Real Estate API — Deploy Summary   "
+          echo "=========================================="
+          echo "  Commit  : ${{ github.sha }}"
+          echo "  EC2     : ${{ needs.deploy-ec2.result }}"
+          echo "  ECS     : ${{ needs.deploy-ecs.result }}"
+          echo "  EKS     : ${{ needs.deploy-eks.result }}"
+          echo "=========================================="

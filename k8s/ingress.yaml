@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pune-api-ingress
+  namespace: pune-api
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    # Uncomment after cert-manager is installed:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  # Uncomment tls block after obtaining certificate:
+  # tls:
+  #   - hosts:
+  #       - api.yourdomain.com
+  #     secretName: pune-api-tls
+  rules:
+    - host: api.yourdomain.com    # Replace with your actual domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pune-api-service
+                port:
+                  number: 80

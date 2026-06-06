@@ -13,6 +13,12 @@ from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+try:
+    from src.api.middleware import setup_middleware
+    _HAS_MIDDLEWARE = True
+except ImportError:
+    _HAS_MIDDLEWARE = False
+
 # ─────────────────────────────────────────────
 # LOAD MODEL
 # ─────────────────────────────────────────────
@@ -84,6 +90,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if _HAS_MIDDLEWARE:
+    setup_middleware(app)   # adds /metrics endpoint and JSON request logging
 
 
 @app.on_event("startup")
