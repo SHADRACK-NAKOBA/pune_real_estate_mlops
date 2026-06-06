@@ -62,6 +62,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install ML dependencies and train model
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scikit-learn==1.7.2 scipy joblib openpyxl mlflow
+          python src/data/preprocess.py
+          MLFLOW_TRACKING_URI="sqlite:///mlflow.db" python src/models/train.py
+
+      - name: Verify model file exists before Docker build
+        run: |
+          ls -lh models/best_model.pkl
+          echo "Model ready for Docker image"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
