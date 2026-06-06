@@ -21,8 +21,6 @@ models/pycaret_best.pkl
 # Jupyter
 .ipynb_checkpoints/
 
-# Data raw
-data/raw/
 
 # Environment variables
 .env
@@ -40,3 +38,21 @@ Desktop.ini
 # DVC cache
 .dvc/cache/
 .dvc/tmp/
+
+# AWS credentials and keys — NEVER commit these
+*.pem
+*.key
+.aws/
+aws-credentials.txt
+aws_credentials.txt
+
+# Personal configuration files
+personal_config.txt
+my_config.txt
+secrets.txt
+config.local.*
+
+# Local environment overrides
+.env.local
+.env.production
+.env.staging

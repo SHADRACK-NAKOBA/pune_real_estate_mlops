@@ -1,9 +1,48 @@
 # End-to-End Implementation Guide — Pune Real Estate Price Prediction MLOps
-## Complete Record: From Raw Data to Live Production on AWS EC2 + ECS Fargate + EKS Kubernetes
-**Author: Shadrack Nakoba | Organisation: Internal Engineering Reference**
-**Date: June 2026 | Status: LIVE IN PRODUCTION**
+## Complete Implementation Record: Raw Data → Live Production on AWS EC2 + ECS Fargate + EKS Kubernetes
+**Project: Pune Real Estate Price Prediction API**
+**Environment: Windows 11 | VS Code | PowerShell | AWS us-east-1**
 
-> This document is the authoritative implementation record for the Pune Real Estate Price Prediction project. It covers every step taken, every issue encountered, every fix applied, and every click made — in the order they happened. Engineers implementing this in any organisation should follow this document top to bottom.
+---
+
+> **FOR ENGINEERS IMPLEMENTING THIS IN YOUR ORGANISATION**
+> This guide uses placeholder values everywhere personal information appeared.
+> Fill in Section 0 (Your Reference Sheet) before starting. Every placeholder
+> in this document maps to a real value you will obtain during setup.
+
+---
+
+## Section 0 — Your Reference Sheet (Fill Before You Start)
+
+Before beginning, create a text file called `my_setup.txt` on your Desktop
+(NOT inside the project folder — it goes in `.gitignore` automatically).
+Fill in every value as you obtain it. Keep this file private.
+
+```
+# my_setup.txt — YOUR PERSONAL VALUES (do not share or commit)
+
+YOUR_AWS_ACCOUNT_ID        = ____________   # e.g. 123456789012
+YOUR_AWS_REGION            = us-east-1      # change if using different region
+YOUR_IAM_USERNAME          = ____________   # the IAM user you create in AWS
+YOUR_EC2_ELASTIC_IP        = ____________   # from EC2 > Elastic IPs
+YOUR_EC2_KEY_NAME          = ____________   # name of your .pem key file
+YOUR_DOCKERHUB_USERNAME    = ____________   # your hub.docker.com username
+YOUR_GITHUB_USERNAME       = ____________   # your github.com username
+YOUR_EMAIL                 = ____________   # email registered on GitHub
+YOUR_VPC_ID                = ____________   # from AWS > VPC > Your VPCs
+YOUR_SUBNET_IDS            = ____________   # comma-separated subnet IDs
+YOUR_ALB_SG_ID             = ____________   # security group ID for ALB
+YOUR_TASK_SG_ID            = ____________   # security group ID for ECS tasks
+YOUR_ALB_ARN               = ____________   # ALB ARN from load balancer page
+YOUR_TG_ARN                = ____________   # target group ARN
+YOUR_ECS_ALB_DNS           = ____________   # ALB DNS for ECS
+YOUR_EKS_LB_DNS            = ____________   # Nginx ingress LB hostname
+YOUR_GRAFANA_LB_DNS        = ____________   # Grafana LoadBalancer hostname
+YOUR_PROMETHEUS_LB_DNS     = ____________   # Prometheus LoadBalancer hostname
+```
+
+Every time you see a placeholder like `YOUR_AWS_ACCOUNT_ID` in this guide,
+replace it with the matching value from your reference sheet.
 
 ---
 
@@ -11,592 +50,1122 @@
 
 1. [Project Overview](#1-project-overview)
 2. [Final Architecture](#2-final-architecture)
-3. [All Live URLs and Credentials](#3-all-live-urls-and-credentials)
-4. [Phase 1 — Data Science in Google Colab](#4-phase-1--data-science-in-google-colab)
-5. [Phase 2 — Local Development in VS Code](#5-phase-2--local-development-in-vs-code)
-6. [Phase 3 — Docker Containerisation](#6-phase-3--docker-containerisation)
-7. [Phase 4 — GitHub and CI/CD Pipeline](#7-phase-4--github-and-cicd-pipeline)
-8. [Phase 5 — AWS ECR (Container Registry)](#8-phase-5--aws-ecr-container-registry)
-9. [Phase 6 — AWS ECS Fargate Deployment](#9-phase-6--aws-ecs-fargate-deployment)
-10. [Phase 7 — AWS EKS Kubernetes Deployment](#10-phase-7--aws-eks-kubernetes-deployment)
-11. [Phase 8 — Monitoring Dashboards](#11-phase-8--monitoring-dashboards)
-12. [All Issues Faced and How They Were Fixed](#12-all-issues-faced-and-how-they-were-fixed)
+3. [Phase 1 — Google Colab: Data and Model Training](#3-phase-1--google-colab-data-and-model-training)
+4. [Phase 2 — VS Code: Local Development](#4-phase-2--vs-code-local-development)
+5. [Phase 3 — Docker: Containerisation](#5-phase-3--docker-containerisation)
+6. [Phase 4 — GitHub: Version Control and CI/CD](#6-phase-4--github-version-control-and-cicd)
+7. [Phase 5 — AWS Setup: IAM, CLI, ECR](#7-phase-5--aws-setup-iam-cli-ecr)
+8. [Phase 6 — AWS ECS Fargate Deployment](#8-phase-6--aws-ecs-fargate-deployment)
+9. [Phase 7 — AWS EKS Kubernetes Deployment](#9-phase-7--aws-eks-kubernetes-deployment)
+10. [Phase 8 — Monitoring Dashboards](#10-phase-8--monitoring-dashboards)
+11. [CI/CD Pipeline Explained](#11-cicd-pipeline-explained)
+12. [All Issues Faced and Fixes Applied](#12-all-issues-faced-and-fixes-applied)
 13. [GitHub Secrets Reference](#13-github-secrets-reference)
-14. [File Structure Reference](#14-file-structure-reference)
-15. [Production Checklist for Organisations](#15-production-checklist-for-organisations)
+14. [Production Checklist](#14-production-checklist)
 
 ---
 
 ## 1. Project Overview
 
-### What the Project Does
-Predicts residential property prices in Pune, India using machine learning. A client sends property details (area, location, amenities) via HTTP and receives a predicted price in Lakhs (INR) within milliseconds.
-
-### Business Value
-Removes information asymmetry in the Pune real estate market. Buyers, sellers, banks, and PropTech platforms can get instant, data-driven price estimates without relying on broker opinions.
-
-### Tech Stack (Production)
-| Layer | Technology |
-|---|---|
-| Language | Python 3.10 |
-| ML Framework | Scikit-learn (GBM, Random Forest, Ridge, Lasso, Extra Trees) |
-| Experiment Tracking | MLflow (SQLite backend) |
-| AutoML | PyCaret |
-| API Framework | FastAPI + Uvicorn |
-| Metrics | Prometheus + prometheus-fastapi-instrumentator |
-| Containerisation | Docker |
-| Container Registry | AWS ECR + Docker Hub |
-| CI/CD | GitHub Actions (6-job pipeline) |
-| Cloud — VM | AWS EC2 Ubuntu 22.04 + Supervisor |
-| Cloud — Serverless | AWS ECS Fargate + Application Load Balancer |
-| Cloud — Kubernetes | AWS EKS (K8s 1.30) + Nginx Ingress + HPA |
-| Monitoring | Prometheus, Grafana, AWS CloudWatch |
-| Data Versioning | DVC |
+### What It Does
+A machine learning REST API that predicts property prices in Pune, India.
+Input: property features (area, location, amenities). Output: price in Lakhs INR.
 
 ### Model Performance
-| Model | Test R² | MAE (Lakhs) | Status |
+| Model | Test R² | MAE (Lakhs) | Selected |
 |---|---|---|---|
-| Ridge Regression | 0.742 | 14.39 | Baseline |
-| Lasso Regression | 0.765 | 12.72 | — |
-| Random Forest | 0.780 | 8.77 | — |
-| Extra Trees | 0.791 | 9.38 | — |
-| **Gradient Boosting** | **0.795** | **8.64** | **PRODUCTION** |
+| Ridge Regression | 0.742 | 14.39 | No |
+| Lasso Regression | 0.765 | 12.72 | No |
+| Random Forest | 0.780 | 8.77 | No |
+| Extra Trees | 0.791 | 9.38 | No |
+| **Gradient Boosting** | **0.795** | **8.64** | **YES — Production** |
+
+### API Endpoints
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/health` | GET | Returns `{"status":"ok","model_loaded":true}` |
+| `/predict` | POST | Single property price prediction |
+| `/predict/batch` | POST | Up to 100 properties at once |
+| `/docs` | GET | Swagger interactive documentation |
+| `/metrics` | GET | Prometheus metrics scrape endpoint |
+
+### Tech Stack
+Python 3.10 · FastAPI · Scikit-learn · MLflow · Docker · GitHub Actions ·
+AWS ECR · AWS ECS Fargate · AWS EKS · Prometheus · Grafana · CloudWatch
 
 ---
 
 ## 2. Final Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  DATA SOURCES                                                        │
-│  Pune_Real_Estate_Data.xlsx + data_cleaned.csv (200 records)        │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  DATA PIPELINE  (src/data/preprocess.py)                            │
-│  Clean → Engineer 21 features → pune_features.csv                  │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  MODEL TRAINING  (src/models/train.py)                              │
-│  5 models × MLflow tracking → best_model.pkl (GBM, R²=0.795)       │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  FastAPI REST API  (src/api/fastapi_app.py)                         │
-│  GET /health  POST /predict  POST /predict/batch  GET /metrics      │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  DOCKER IMAGE                                                        │
-│  python:3.10-slim + all deps + model baked in → ~1.8GB image        │
-│  Pushed to: Docker Hub + AWS ECR                                    │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-              ▼              ▼              ▼
-┌─────────────────┐  ┌──────────────┐  ┌──────────────────────────┐
-│  AWS EC2        │  │  AWS ECS     │  │  AWS EKS Kubernetes      │
-│  Ubuntu 22.04   │  │  Fargate     │  │  K8s 1.30, 2 nodes       │
-│  Supervisor     │  │  2 tasks     │  │  3 API pods              │
-│  Nginx          │  │  ALB         │  │  Nginx Ingress + HPA     │
-│  Port 8000      │  │  Port 80     │  │  Prometheus + Grafana    │
-└─────────────────┘  └──────────────┘  └──────────────────────────┘
-              │              │              │
-              └──────────────┴──────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  GITHUB ACTIONS CI/CD  (.github/workflows/deploy.yml)               │
-│  push → test → build → deploy-ec2 + deploy-ecs + deploy-eks → notify│
-└─────────────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  MONITORING                                                          │
-│  Prometheus (EKS) · Grafana (EKS) · CloudWatch (EC2 + ECS)         │
-└─────────────────────────────────────────────────────────────────────┘
+RAW DATA (200 Pune property records)
+  Pune_Real_Estate_Data.xlsx + data_cleaned.csv
+         │
+         ▼
+PREPROCESSING  src/data/preprocess.py
+  Clean → Engineer features → pune_features.csv (197 rows, 21 features)
+         │
+         ▼
+MODEL TRAINING  src/models/train.py
+  5 models × MLflow tracking → best_model.pkl (GBM, R²=0.795)
+         │
+         ▼
+REST API  src/api/fastapi_app.py
+  GET /health  POST /predict  POST /predict/batch  GET /metrics
+         │
+         ▼
+DOCKER IMAGE  (~1.8 GB)
+  python:3.10-slim + all deps + model baked in
+  Pushed to → Docker Hub  AND  AWS ECR
+         │
+    ┌────┴────┐──────────────────┐
+    ▼         ▼                  ▼
+  EC2       ECS Fargate        EKS Kubernetes
+  Ubuntu    2 tasks            3 pods / 2 nodes
+  Supervisor ALB               Nginx Ingress + HPA
+    │         │                  │
+    └────┬────┘──────────────────┘
+         │
+         ▼
+GITHUB ACTIONS CI/CD  (6 jobs on every push to main)
+test → build → deploy-ec2 + deploy-ecs + deploy-eks → notify
+         │
+         ▼
+MONITORING
+Prometheus · Grafana (EKS) · CloudWatch (EC2 + ECS)
 ```
 
 ---
 
-## 3. All Live URLs and Credentials
+## 3. Phase 1 — Google Colab: Data and Model Training
 
-### API Endpoints (all deployments)
+### What Google Colab Is
+Google Colab is a free cloud-based Jupyter notebook. It runs Python on
+Google's servers — you need only a browser and a Google account. No
+installation required on your machine.
 
-| Deployment | Swagger UI | Health Check | Predict |
-|---|---|---|---|
-| EC2 | `http://54.147.249.94:8000/docs` | `http://54.147.249.94:8000/health` | `http://54.147.249.94:8000/predict` |
-| ECS Fargate | `http://pune-api-alb-409088602.us-east-1.elb.amazonaws.com/docs` | `.../health` | `.../predict` |
-| EKS Kubernetes | `http://a10b8a261812c4320acea02fe2f41c3a-608ac9cb7c009e77.elb.us-east-1.amazonaws.com/docs` | `.../health` | `.../predict` |
+Think of it as Python running in the cloud, inside your browser, where each
+grey code box is called a **cell**.
 
-### Sample API Call
-```bash
-curl -X POST http://54.147.249.94:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "area_sqft": 1200,
-    "township_area": 80,
-    "amenity_score": 5,
-    "has_clubhouse": 1,
-    "has_school": 1,
-    "has_hospital": 1,
-    "has_mall": 0,
-    "has_park": 1,
-    "has_pool": 1,
-    "has_gym": 1,
-    "location": 3,
-    "sub_area": 5,
-    "property_type": 1,
-    "company_name": 2
-  }'
-# Response: {"predicted_price_lakhs":87.44,"predicted_price_millions":8.744,...}
+**How to run a cell:** Click the cell once to select it.
+Press **Shift + Enter**. The cell runs and moves to the next cell.
+Wait for the spinning circle to disappear before running the next cell.
+
+---
+
+### Step 1 — Open the Notebook in Colab
+
+1. Open **Google Chrome** (recommended browser)
+2. Go to: **https://colab.research.google.com**
+3. A page loads with a modal dialog. If no dialog appears, click
+   **File** in the top menu bar → then click **Open notebook**
+4. In the dialog, click the **Upload** tab
+5. Click **Browse** (or drag and drop)
+6. Navigate to your project folder:
+   `C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops\notebooks\`
+7. Select the file: `Pune_Real_Estate_EndToEnd_ML.ipynb`
+8. Click **Open**
+9. The notebook opens. You see a title at the top:
+   **"Pune Real Estate — End-to-End ML Pipeline"**
+   and a series of grey code boxes below it.
+
+---
+
+### Step 2 — Cell 1: Upload Raw Data Files
+
+**What this cell does:** Creates the folder structure in Colab's cloud storage
+and opens a file picker so you can upload your two data files.
+
+1. Click on the first grey code box (Cell 1). It has this code at the top:
+   ```python
+   from google.colab import files
+   ```
+2. Press **Shift + Enter** to run it
+3. Look at the output area BELOW the cell. A grey box appears with the text:
+   **"Choose Files"** (a file upload button)
+4. Click **Choose Files**
+5. A Windows file picker dialog opens on your screen
+6. Navigate to your project folder:
+   `C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops\data\raw\`
+7. Hold **Ctrl** on your keyboard and click BOTH files:
+   - `Pune_Real_Estate_Data.xlsx`
+   - `data_cleaned.csv`
+8. Click **Open**
+9. Watch the output below the cell. You see two progress bars. Wait for both
+   to reach 100%
+10. The final output shows:
+    ```
+    Saved → /content/data/raw/Pune_Real_Estate_Data.xlsx
+    Saved → /content/data/raw/data_cleaned.csv
+    Files in /content/data/raw/: ['Pune_Real_Estate_Data.xlsx', 'data_cleaned.csv']
+    ```
+
+**WARNING:** If only one file uploaded, do NOT run Cell 1 again. Instead,
+run just the `files.upload()` line again. Running Cell 1 again recreates
+the folders and may clear what was uploaded.
+
+---
+
+### Step 3 — Cell 2: Install Dependencies
+
+1. Click on Cell 2. It contains:
+   ```python
+   !pip install -q mlflow pycaret[full] fastapi uvicorn joblib openpyxl
+   ```
+2. Press **Shift + Enter**
+3. Many lines of text scroll by (packages downloading). This takes **3-5 minutes**
+4. You know it is finished when the spinning circle on the left of the cell
+   becomes a green tick (✓) and the next cell is highlighted
+5. No output visible = success (the `-q` flag suppresses output)
+
+**WARNING:** If you see a red error box with `ERROR: Could not install packages`,
+look for the specific package name causing the error. Try installing it
+separately: `!pip install <package-name> --quiet`
+
+---
+
+### Step 4 — Cell 3: Imports and File Detection
+
+1. Click Cell 3 and press **Shift + Enter**
+2. Output shows:
+   ```
+   XLSX: Pune_Real_Estate_Data.xlsx
+   CSV : data_cleaned.csv
+   ```
+3. If either shows `None`, the file was not uploaded. Go back to Step 2.
+
+---
+
+### Step 5 — Cells 5–8: Exploratory Data Analysis
+
+Run each cell by pressing **Shift + Enter** and waiting for it to complete.
+
+**Cell 5** — Loads data, prints shape: `(200, 18)` means 200 rows, 18 columns.
+
+**Cell 6** — Prints missing value counts. Normal to see some missing values
+in `total_township_area_in_acres` (handled later with median imputation).
+
+**Cell 7** — Shows two charts side by side:
+- Left chart: Price distribution (right-skewed bell curve — most properties
+  are cheaper, a few are expensive)
+- Right chart: Log of price (more symmetric — confirms log transformation helps)
+
+**Cell 8** — Shows a colour grid (heatmap):
+- Red = positive correlation, Blue = negative, White = no correlation
+- Look at the bottom row (`Price Cleaned`) — larger red values = stronger
+  predictors of price
+
+---
+
+### Step 6 — Cell 10: Data Cleaning and Feature Engineering
+
+This is the most important cell. It runs two functions:
+
+**Press Shift + Enter** and wait. Expected output:
 ```
+✅  Features saved — shape: (197, 21)
+```
+Followed by a table showing the first 3 rows.
 
-### Monitoring Dashboards
+**What the code does (plain English):**
 
-| Dashboard | Access Method | URL / Command |
-|---|---|---|
-| Swagger UI | Browser | Any URL above + `/docs` |
-| Prometheus | kubectl port-forward | `kubectl port-forward svc/prometheus 9090:9090 -n pune-api` → http://localhost:9090 |
-| Grafana | kubectl port-forward | `kubectl port-forward svc/grafana 3000:3000 -n pune-api` → http://localhost:3000 |
-| Grafana Login | — | admin / PuneAPI@2026 |
-| CloudWatch | AWS Console | us-east-1 → CloudWatch → Dashboards → PuneRealEstateAPI |
-| MLflow | Local only | `mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000` → http://localhost:5000 |
-
-### AWS Infrastructure (Account: 211125741068, Region: us-east-1)
-
-| Resource | Name / ARN |
+| Action | Why |
 |---|---|
-| ECR Repository | `211125741068.dkr.ecr.us-east-1.amazonaws.com/pune-real-estate-api` |
-| ECS Cluster | `pune-api-cluster` |
-| ECS Service | `pune-api-service` |
-| ECS Task Definition | `pune-api-task:1` |
-| ALB (ECS) | `pune-api-alb-409088602.us-east-1.elb.amazonaws.com` |
-| ALB ARN | `arn:aws:elasticloadbalancing:us-east-1:211125741068:loadbalancer/app/pune-api-alb/f289cf745031a579` |
-| Target Group ARN | `arn:aws:elasticloadbalancing:us-east-1:211125741068:targetgroup/pune-api-tg/074cee516680ba0b` |
-| EKS Cluster | `pune-api-eks` |
-| EKS Ingress LB | `a10b8a261812c4320acea02fe2f41c3a-608ac9cb7c009e77.elb.us-east-1.amazonaws.com` |
-| VPC | `vpc-0803d39d79405b293` |
-| CloudWatch Log Group | `/ecs/pune-api` (30-day retention) |
+| Lowercase all column names | Prevents bugs from capitalisation differences |
+| Extract numbers from "1200 sqft" | Raw data has text mixed with numbers |
+| Map "Yes"/"No" → 1/0 | ML models need numbers, not text |
+| `log_area = log(area_sqft)` | Reduces right skew in area values |
+| `amenity_score = sum of 7 flags` | Single score from 0–7 summarising all amenities |
+| `price_per_sqft = price / area` | Efficiency metric |
+| Label-encode location, type, company | Tree models need integers not text categories |
+| Drop rows with no price or area | Cannot train on unknown answers |
 
-### GitHub Repository
-`https://github.com/SHADRACK-NAKOBA/pune_real_estate_mlops`
+Output file: `/content/data/processed/pune_features.csv` — 197 rows, 21 columns.
 
 ---
 
-## 4. Phase 1 — Data Science in Google Colab
+### Step 7 — Cell 12: Train 5 Models with MLflow
 
-### What Colab Is and Why We Used It
-Google Colab is a free cloud Jupyter notebook that runs on Google's servers. We used it for the initial experiment because it requires zero local setup, has no disk space problems for heavy ML libraries, and produces a shareable notebook record of every step.
+**Press Shift + Enter.** This takes **3-8 minutes** — the spinning circle stays
+active the entire time. Do not click elsewhere or refresh.
 
-### Step 1 — Open the Notebook
-1. Go to **https://colab.research.google.com**
-2. Sign in with a Google account
-3. Click **File → Upload notebook**
-4. Upload `notebooks/Pune_Real_Estate_EndToEnd_ML.ipynb` from the project folder
-5. The notebook opens with the title "Pune Real Estate — End-to-End ML Pipeline"
-
-### Step 2 — Upload Raw Data (Cell 1)
-Run Cell 1. A file picker appears in the output.
-- Select both files at once (hold Ctrl and click both):
-  - `Pune_Real_Estate_Data.xlsx`
-  - `data_cleaned.csv`
-- Files are saved to `/content/data/raw/`
-
-### Step 3 — Install Dependencies (Cell 2)
-```python
-!pip install -q mlflow pycaret[full] fastapi uvicorn joblib openpyxl
+Watch the output lines appear one by one:
 ```
-Takes 3-5 minutes. Installs MLflow, PyCaret AutoML, FastAPI, and supporting libraries.
+Ridge           R²=0.742  MAE=14.4L  RMSE=19.8L  CV=0.718
+Lasso           R²=0.765  MAE=12.7L  RMSE=18.2L  CV=0.739
+RandomForest    R²=0.780  MAE=8.8L   RMSE=17.4L  CV=0.763
+ExtraTrees      R²=0.791  MAE=9.4L   RMSE=16.9L  CV=0.771
+GBM             R²=0.795  MAE=8.6L   RMSE=16.5L  CV=0.779  ← BEST
 
-### Step 4 — Exploratory Data Analysis (Cells 5-8)
-- Load both raw files into pandas DataFrames
-- Check missing values (45 missing township areas, 3 missing prices)
-- Plot price distribution — right-skewed, confirming need for log transformation
-- Plot correlation heatmap — area and amenities positively correlated with price
-
-### Step 5 — Data Cleaning and Feature Engineering (Cell 10)
-Two functions run in sequence:
-
-**clean_raw()** does:
-- Standardise column names (lowercase, underscores)
-- Extract numbers from text columns ("1200 sqft" → 1200)
-- Map "Yes"/"No" amenity text to 1/0 binary integers
-- Drop rows with no price or area
-
-**engineer_features()** creates 5 derived features:
-- `log_area` = log(area_sqft) — reduces right skew
-- `amenity_score` = sum of all 7 binary amenity flags (0-7)
-- `price_per_sqft` = price / area — efficiency metric
-- `log_price` = log(price_lakhs) — normalised target
-- `township_area` — imputed with median where missing
-
-Categorical columns (location, sub_area, property_type, company_name) are label-encoded to integers. Label encoding was chosen over one-hot encoding because tree models handle integers natively without dimensionality explosion on a 200-row dataset.
-
-Output: `pune_features.csv` — 197 rows × 21 columns.
-
-### Step 6 — Model Training with MLflow (Cell 12)
-Five scikit-learn models trained:
-```python
-Ridge(alpha=10)
-Lasso(alpha=1)
-RandomForestRegressor(n_estimators=200)
-GradientBoostingRegressor(n_estimators=200, learning_rate=0.05)
-ExtraTreesRegressor(n_estimators=200)
+✅  Best: GBM  R²=0.795
 ```
 
-Each model is wrapped in a scikit-learn **Pipeline** (imputer + scaler + model). This is critical — the pipeline bundles preprocessing and the model into a single object so the same transformations applied during training are guaranteed to be applied at inference. Without this, training-serving skew corrupts predictions.
+**Reading the metrics:**
+- **R²** = how much price variation the model explains. 0.795 = 79.5% explained.
+  Closer to 1.0 is better.
+- **MAE** = average prediction error in Lakhs. 8.64 Lakhs = off by ~₹864,000
+  on average.
+- **CV** = cross-validation R² across 5 different train/test splits.
+  Confirms the model is not just getting lucky on one split.
 
-Every run logs to MLflow:
-- Parameters: model name
-- Metrics: MAE, RMSE, R², MAPE, 5-fold CV R²
-- Artifact: the fitted pipeline object
-
-Winner: **Gradient Boosting** — R²=0.795, MAE=8.64 Lakhs.
-
-Model saved to `/content/models/best_model.pkl` as:
-```python
-{"pipeline": fitted_pipeline, "features": list_of_feature_columns}
-```
-
-### Step 7 — PyCaret AutoML (Cells 16-17)
-PyCaret runs 20+ algorithm types automatically (`compare_models(n_select=3)`). It confirmed gradient boosting variants dominate, validating our scikit-learn experiment. The best PyCaret model was saved as `pycaret_best.pkl`.
-
-### Step 8 — FastAPI Test Inside Colab (Cells 19-21)
-A minimal FastAPI app was written to `/content/api_app.py` and launched with uvicorn. An ngrok tunnel created a public URL. The `/predict` endpoint was tested with a sample property and returned a valid price. This proved the full data-to-prediction pipeline worked end-to-end.
-
-### Step 9 — Download Outputs (Cell 23)
-Downloaded from Colab to local machine:
-- `pune_features.csv` → copied to `data/processed/`
-- `best_model.pkl` → copied to `models/`
+Why GBM wins: highest R², lowest MAE, consistent CV score.
 
 ---
 
-## 5. Phase 2 — Local Development in VS Code
+### Step 8 — Cells 13–14: Results Table and Feature Chart
 
-### Step 10 — Project Structure Setup
-The project folder was created at `C:\Users\admin\Desktop\pune_real_estate_mlops` with this structure:
+**Cell 13:** Prints a sorted table of all 5 models. GBM at the top.
+
+**Cell 14:** Prints a bar chart — which features matter most to the model.
+Typically `area_sqft` and `log_area` are the tallest bars (property size
+drives price most). Location and amenity scores appear in the middle.
+
+---
+
+### Step 9 — Cells 16–17: PyCaret AutoML
+
+**Cell 16:** Press **Shift + Enter**. Takes **10-15 minutes**. PyCaret runs
+20+ different algorithm types automatically and ranks them by R². Output is a
+table of all models tested. Gradient boosting variants appear at the top,
+confirming our scikit-learn experiment.
+
+**Cell 17:** Tunes the best PyCaret model with Bayesian optimisation (20
+iterations) and saves it to `/content/models/pycaret_best.pkl`.
+
+---
+
+### Step 10 — Cells 19–21: Test FastAPI Inside Colab
+
+**Cell 19:** Writes the FastAPI app code to a file. Output: `FastAPI app written.`
+
+**Cell 20:** Starts the FastAPI server and creates a public tunnel URL.
+Output shows a URL like:
 ```
-├── data/raw/           ← raw Excel and CSV files
-├── data/processed/     ← cleaned feature set
-├── models/             ← trained model files
-├── src/data/           ← preprocess.py
-├── src/models/         ← train.py, pycaret_train.py
-├── src/api/            ← fastapi_app.py, flask_app.py, middleware.py
-├── deployment/docker/  ← Dockerfile, docker-compose.yml
-├── deployment/ecs/     ← task-definition.json
-├── k8s/                ← all Kubernetes manifests
-├── monitoring/         ← cloudwatch_setup.py, prometheus_config.yaml, grafana_dashboard.json
-├── NAKOBA_implementation/ ← this documentation
-├── .github/workflows/  ← deploy.yml
-├── requirements.txt    ← full development dependencies
-└── requirements_docker.txt ← production-only dependencies
+🌐 Public API URL: https://abc123.ngrok.io
+   Swagger docs : https://abc123.ngrok.io/docs
 ```
 
-### Step 11 — Python Virtual Environment
+**If ngrok asks for an auth token:** Create a free account at
+https://ngrok.com → Dashboard → Copy your token →
+Run: `!ngrok authtoken YOUR_TOKEN` → Then re-run Cell 20.
+
+**Cell 21:** Tests the `/predict` endpoint. Output shows:
+```
+Status: 200
+Response: {'predicted_price_lakhs': 87.4, 'predicted_price_millions': 8.74}
+```
+This confirms the full pipeline works end-to-end.
+
+---
+
+### Step 11 — Cell 23: Download Outputs from Colab
+
+**Press Shift + Enter.** Your browser automatically downloads two files:
+- `pune_features.csv` → saved to your Windows `Downloads` folder
+- `best_model.pkl` → saved to your Windows `Downloads` folder
+
+Open **Windows Explorer** (press `Windows key + E`):
+1. Go to `C:\Users\YOUR_NAME\Downloads\`
+2. Find `pune_features.csv` → Copy it (Ctrl+C)
+3. Go to `C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops\data\processed\`
+4. Paste it (Ctrl+V)
+5. Go back to Downloads
+6. Find `best_model.pkl` → Copy it
+7. Go to `C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops\models\`
+8. Paste it
+
+---
+
+## 4. Phase 2 — VS Code: Local Development
+
+### Step 12 — Open the Project in VS Code
+
+**Method A — From VS Code:**
+1. Open VS Code from the Start Menu or taskbar
+2. In the top menu bar, click **File**
+3. In the dropdown, click **Open Folder**
+4. A Windows folder picker opens
+5. Navigate to: `C:\Users\YOUR_NAME\Desktop\`
+6. Click once on `pune_real_estate_mlops` (do not open it, just select it)
+7. Click **Select Folder** button (bottom-right of the picker)
+8. VS Code reloads. On the left panel you see the folder tree:
+   `data/`, `models/`, `src/`, `deployment/`, etc.
+
+**Method B — From PowerShell:**
 ```powershell
-cd C:\Users\admin\Desktop\pune_real_estate_mlops
+code C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops
+```
+
+---
+
+### Step 13 — Open the Integrated Terminal in VS Code
+
+1. Look at the top menu bar: **Terminal** → click it
+2. In the dropdown, click **New Terminal**
+3. A terminal panel slides up from the bottom of VS Code
+4. The prompt shows something like:
+   `PS C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops>`
+5. The `PS` prefix means it is PowerShell. This is correct.
+
+If the path in the prompt is wrong, type:
+```powershell
+cd C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops
+```
+
+---
+
+### Step 14 — Activate the Virtual Environment
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+After running this, your prompt changes to:
+```
+(.venv) PS C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops>
+```
+The `(.venv)` prefix confirms the virtual environment is active.
+
+**If you see: "cannot be loaded because running scripts is disabled"**
+Run this once, then retry:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+# When prompted: type Y and press Enter
+```
+
+**If you see: "the path .venv does not exist"**
+Create the virtual environment first:
+```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+```
+
+---
+
+### Step 15 — Install Dependencies
+
+```powershell
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Python version used: **3.10.11** (managed by pyenv-win).
+This takes **10-20 minutes** on first run. You see hundreds of lines like:
+`Collecting pandas...`, `Downloading pandas-2.2.0...`, etc.
 
-### Step 12 — Run Preprocessing Pipeline Locally
+When finished, the last line reads:
+`Successfully installed [list of packages]`
+
+Verify everything installed:
 ```powershell
-python src/data/preprocess.py
+python -c "import pandas, sklearn, mlflow, fastapi, joblib; print('All OK')"
 ```
-Reads both raw files, cleans and engineers features, saves `data/processed/pune_features.csv`. This is the same logic as Colab Cell 10 but structured as a proper Python module with configurable paths.
-
-### Step 13 — Run Model Training Locally
-```powershell
-python src/models/train.py
-```
-Trains all 5 models with MLflow tracking. The key difference from Colab: uses `sqlite:///mlflow.db` as the tracking URI (not `file://`) because Windows path formatting breaks the `file://` URI scheme.
-
-Output: `models/best_model.pkl` and `models/feature_columns.txt`.
-
-### Step 14 — View MLflow Dashboard
-```powershell
-mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
-```
-Open **http://localhost:5000** to compare all 5 model runs visually. This is the experiment tracking interface — click each run to see parameters, metrics, and artifacts. The GBM run shows the highest R² and lowest MAE confirming it as the production model.
-
-### Step 15 — Run FastAPI Locally
-```powershell
-uvicorn src.api.fastapi_app:app --reload --port 8000
-```
-Open **http://localhost:8000/docs** — the Swagger UI auto-generated by FastAPI. Test the `/health` and `/predict` endpoints directly in the browser without any external tool.
-
-The FastAPI application (`src/api/fastapi_app.py`) has:
-- **Lazy model loading** — model loads once at startup and is held in memory
-- **Pydantic validation** — every incoming field is type-checked and range-validated automatically
-- **CORS middleware** — allows any browser-based client to call the API
-- **Prometheus middleware** — adds `/metrics` endpoint for monitoring (added in Phase 4)
-
-### Step 16 — Prometheus Middleware
-A new file `src/api/middleware.py` was created to add:
-1. **Structured JSON logging** — every request logs method, path, status, duration in JSON format
-2. **Prometheus metrics** — `prometheus-fastapi-instrumentator` adds automatic histograms, counters and a `/metrics` endpoint
-
-`fastapi_app.py` imports and wires this in:
-```python
-if _HAS_MIDDLEWARE:
-    setup_middleware(app)
-```
-The `_HAS_MIDDLEWARE` guard means the app still works if `prometheus-fastapi-instrumentator` is not installed.
+Expected output: `All OK`
 
 ---
 
-## 6. Phase 3 — Docker Containerisation
+### Step 16 — Run Data Preprocessing
 
-### Step 17 — Review the Dockerfile
-`deployment/docker/Dockerfile`:
-```dockerfile
-FROM python:3.10-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl git
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-EXPOSE 8000
-HEALTHCHECK --interval=30s CMD curl -f http://localhost:8000/health || exit 1
-CMD ["uvicorn", "src.api.fastapi_app:app", "--host", "0.0.0.0", "--port", "8000"]
+```powershell
+python src/data/preprocess.py
 ```
 
-Key decisions:
-- `python:3.10-slim` — minimal base image, reduces attack surface and image size
-- `COPY requirements.txt` before `COPY . .` — Docker layer caching means pip only reruns when requirements change, not on every code push
-- `--no-cache-dir` — saves 200-400MB by not storing pip cache inside the image
-- `curl` installed — needed for the HEALTHCHECK command
+Expected output:
+```
+Raw XLSX : (200, 18)  |  Cleaned CSV : (200, 12)
+✅  Feature set saved → ...\data\processed\pune_features.csv
+   Shape   : (197, 21)
+```
 
-### Step 18 — Build Docker Image (Local)
+**If you see FileNotFoundError:** The raw data files are missing from
+`data/raw/`. Copy them from wherever you stored the original files.
+
+---
+
+### Step 17 — Run Model Training
+
 ```powershell
-cd C:\Users\admin\Desktop\pune_real_estate_mlops
+python src/models/train.py
+```
+
+Takes 3-8 minutes. Expected output ends with:
+```
+✅  Best model (gbm, R²=0.795) saved → models\best_model.pkl
+```
+
+---
+
+### Step 18 — View MLflow Dashboard
+
+```powershell
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
+```
+
+The terminal shows:
+```
+[INFO] Starting gunicorn server
+[INFO] Listening at: http://127.0.0.1:5000
+```
+
+Open your browser → go to **http://localhost:5000**
+
+**Navigating the MLflow UI:**
+1. The main page shows **Experiments** on the left sidebar
+2. Click **pune_real_estate_price_prediction**
+3. A table appears showing 5 rows — one per model run
+4. Click the column header **test_r2** to sort by R² descending
+5. GBM appears at the top
+6. Click any row (run name) to see full details: all metrics, parameters, plots
+7. To compare runs: tick the checkboxes on 2+ rows → click **Compare**
+8. A side-by-side comparison page opens showing metric differences
+
+Press **Ctrl+C** in the terminal to stop MLflow when done.
+
+---
+
+### Step 19 — Run FastAPI Locally
+
+Open a **second terminal** in VS Code:
+1. Click **Terminal** in the top menu bar
+2. Click **New Terminal** again
+3. A second terminal panel appears (you can switch between them using the
+   dropdown in the terminal panel top-right)
+
+In the second terminal:
+```powershell
+.\.venv\Scripts\Activate.ps1
+uvicorn src.api.fastapi_app:app --reload --port 8000
+```
+
+Output:
+```
+INFO: Started server process
+INFO: Application startup complete.
+INFO: Uvicorn running on http://0.0.0.0:8000
+```
+
+Open browser → **http://localhost:8000/docs**
+
+**Navigating Swagger UI:**
+1. The page shows three sections: `Monitoring`, `Prediction`, each collapsed
+2. Click **GET /health** to expand it
+3. Click the **Try it out** button (top-right of the section)
+4. Click the blue **Execute** button
+5. Scroll down — you see `Response body: {"status":"ok","model_loaded":true}`
+6. Click **POST /predict** to expand it
+7. Click **Try it out**
+8. The request body shows a JSON template — modify the values if desired
+9. Click **Execute**
+10. Response body shows the predicted price
+
+Press **Ctrl+C** to stop the server.
+
+---
+
+## 5. Phase 3 — Docker: Containerisation
+
+### Step 20 — Verify Docker Desktop is Running
+
+Look at the Windows **taskbar** (bottom of screen). Find the system tray
+(bottom-right corner, near the clock). Look for a whale icon (🐳).
+
+- **Whale icon visible, not spinning** = Docker is running. Proceed.
+- **No whale icon** = Docker Desktop is not open.
+  Click **Start** → search for **Docker Desktop** → click to open it.
+  Wait 60 seconds until the whale icon appears and stops animating.
+
+Verify in PowerShell:
+```powershell
+docker --version
+```
+Expected: `Docker version 24.x.x`
+
+---
+
+### Step 21 — Build the Docker Image
+
+In the VS Code terminal (with `.venv` active, in the project root):
+```powershell
 docker build -t pune-real-estate-api:latest -f deployment/docker/Dockerfile .
 ```
-Takes 10-20 minutes on first build. Final image size: ~1.8GB.
 
-**Note:** Docker Desktop must be running (whale icon in system tray).
+**The dot `.` at the very end is required** — it tells Docker to use the
+current folder as the build context.
 
-### Step 19 — Test Docker Container Locally
+Output scrolls through 7 build steps. Takes 10-20 minutes first time.
+On subsequent builds (code changes only, no requirements change), takes
+30-60 seconds because Docker caches the pip install layer.
+
+Final line: `=> exporting to image` followed by a success summary.
+
+Verify the image exists:
+```powershell
+docker images pune-real-estate-api
+```
+Expected: one row showing the image with a size ~1.8GB.
+
+---
+
+### Step 22 — Test the Container Locally
+
 ```powershell
 docker run -d --name pune_api_test -p 8000:8000 pune-real-estate-api:latest
-Start-Sleep -Seconds 30
-Invoke-WebRequest -Uri http://localhost:8000/health | Select-Object -ExpandProperty Content
-# Expected: {"status":"ok","model_loaded":true}
+Start-Sleep -Seconds 35
+Invoke-WebRequest -Uri http://localhost:8000/health -UseBasicParsing | Select-Object -ExpandProperty Content
+```
 
+Expected: `{"status":"ok","model_loaded":true}`
+
+View container logs:
+```powershell
+docker logs pune_api_test
+```
+Look for the line: `✅  Model loaded successfully.`
+
+Stop and remove the test container:
+```powershell
 docker stop pune_api_test
 docker rm pune_api_test
 ```
 
-### Step 20 — Push to Docker Hub
-1. Create account at **https://hub.docker.com**
-2. Create repository named `pune-real-estate-api` (Public)
-3. Create access token: Account Settings → Security → New Access Token → name it `github-actions`
-4. Login and push:
-```powershell
-docker login -u YOUR_USERNAME
-# When prompted for password: paste the ACCESS TOKEN
+---
 
-docker tag pune-real-estate-api:latest YOUR_USERNAME/pune-real-estate-api:latest
-docker tag pune-real-estate-api:latest YOUR_USERNAME/pune-real-estate-api:v1.0.0
-docker push YOUR_USERNAME/pune-real-estate-api:latest
-docker push YOUR_USERNAME/pune-real-estate-api:v1.0.0
-```
+### Step 23 — Create Docker Hub Account and Repository
+
+1. Open browser → go to **https://hub.docker.com**
+2. Click **Sign Up** (top-right)
+3. Fill in: username, email, password
+4. Verify your email address (check inbox, click the link)
+5. Log in to Docker Hub
+6. Click **Create Repository** (blue button on the main page)
+7. Fill in:
+   - Repository name: `pune-real-estate-api`
+   - Visibility: **Public**
+8. Click **Create**
+
+**Create an Access Token (more secure than your password):**
+1. Click your username/avatar (top-right corner)
+2. Click **Account Settings** in the dropdown
+3. In the left sidebar, click **Security**
+4. Click **New Access Token**
+5. Token description: `github-actions`
+6. Access permissions: **Read, Write, Delete**
+7. Click **Generate**
+8. A token appears (long string of letters/numbers)
+9. Click **Copy** next to the token — it shows **only once**
+10. Paste it into your `my_setup.txt` file as `DOCKERHUB_TOKEN`
 
 ---
 
-## 7. Phase 4 — GitHub and CI/CD Pipeline
-
-### Step 21 — Push Code to GitHub
-Repository: `https://github.com/SHADRACK-NAKOBA/pune_real_estate_mlops`
+### Step 24 — Push Image to Docker Hub
 
 ```powershell
-git init
+# Log in (when prompted for Password, paste the ACCESS TOKEN not your password)
+docker login -u YOUR_DOCKERHUB_USERNAME
+
+# Tag with your username
+docker tag pune-real-estate-api:latest YOUR_DOCKERHUB_USERNAME/pune-real-estate-api:latest
+docker tag pune-real-estate-api:latest YOUR_DOCKERHUB_USERNAME/pune-real-estate-api:v1.0.0
+
+# Push
+docker push YOUR_DOCKERHUB_USERNAME/pune-real-estate-api:latest
+docker push YOUR_DOCKERHUB_USERNAME/pune-real-estate-api:v1.0.0
+```
+
+Takes 5-15 minutes. Final output:
+```
+latest: digest: sha256:abc123... size: 1234
+```
+
+Verify on Docker Hub:
+1. Browser → **https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/pune-real-estate-api**
+2. Click the **Tags** tab
+3. You should see: `latest` and `v1.0.0`
+
+---
+
+## 6. Phase 4 — GitHub: Version Control and CI/CD
+
+### Step 25 — Push Code to GitHub
+
+```powershell
+git config user.name "YOUR FULL NAME"
+git config user.email "YOUR_EMAIL"
 git add .
 git commit -m "Initial commit: Pune Real Estate MLOps pipeline"
-git remote add origin https://github.com/SHADRACK-NAKOBA/pune_real_estate_mlops.git
+git remote add origin https://github.com/YOUR_GITHUB_USERNAME/pune_real_estate_mlops.git
 git push -u origin main
 ```
 
-### Step 22 — Set Git Author to SHADRACK NAKOBA
-All commits must show the correct author for the GitHub contributor widget to display correctly. The email on the GitHub account must match the git config email:
-
-```powershell
-git config user.name "SHADRACK NAKOBA"
-git config user.email "shadrack.n159@gmail.com"
-```
-
-To rewrite all historical commits (if previous commits show a different name):
-```bash
-FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --env-filter '
-export GIT_AUTHOR_NAME="SHADRACK NAKOBA"
-export GIT_AUTHOR_EMAIL="shadrack.n159@gmail.com"
-export GIT_COMMITTER_NAME="SHADRACK NAKOBA"
-export GIT_COMMITTER_EMAIL="shadrack.n159@gmail.com"
-' -- --all
-git push origin main --force
-```
-
-Also confirm `shadrack.n159@gmail.com` is added and verified in GitHub → Settings → Emails.
-
-### Step 23 — The CI/CD Workflow
-
-File: `.github/workflows/deploy.yml`
-
-The pipeline has **6 jobs** that run on every push to `main`:
-
-```
-Job 1: test
-  → Checkout code
-  → Install Python 3.10
-  → Install core ML packages
-  → Run src/data/preprocess.py
-  → Run src/models/train.py (with MLFLOW_TRACKING_URI=sqlite:///mlflow.db)
-  → Run pytest tests/ (or skip if no tests)
-
-Job 2: build  (needs: test)
-  → Checkout code
-  → Install Python 3.10
-  → Install ML packages + train model ← CRITICAL: model baked into image here
-  → Verify models/best_model.pkl exists
-  → Docker build
-  → Login to Docker Hub → push :latest and :${{ github.sha }}
-  → Login to ECR → pull from Docker Hub → retag → push to ECR
-
-Job 3: deploy-ec2  (needs: build)
-  → SSH into EC2 (appleboy/ssh-action)
-  → cd ~/pune_real_estate_mlops
-  → git pull origin main
-  → source .venv/bin/activate
-  → pip install -r requirements_docker.txt
-  → sudo supervisorctl restart pune_api
-  → curl -f http://localhost:8000/health
-
-Job 4: deploy-ecs  (needs: build)
-  → Configure AWS credentials
-  → Login to ECR
-  → Render task-definition.json with new image SHA
-  → aws-actions/amazon-ecs-deploy-task-definition (wait-for-service-stability: false)
-  → Verify: aws ecs describe-services → print running/desired/pending counts
-
-Job 5: deploy-eks  (needs: build)
-  → Configure AWS credentials
-  → aws eks update-kubeconfig
-  → kubectl set image deployment/pune-api pune-api=ECR_IMAGE:${{ github.sha }}
-  → kubectl rollout status --timeout=300s || true
-  → kubectl get pods / svc
-
-Job 6: notify  (needs: deploy-ec2 + deploy-ecs + deploy-eks, always runs)
-  → Print deploy summary table (EC2/ECS/EKS result)
-  → Slack notification (continue-on-error: true, optional)
-```
-
-### Step 24 — Add GitHub Secrets
-Go to: GitHub → Repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
-
-Add each of these:
-
-| Secret Name | Value | Where to find it |
-|---|---|---|
-| `DOCKERHUB_USERNAME` | Your Docker Hub username | hub.docker.com profile |
-| `DOCKERHUB_TOKEN` | Docker Hub access token | hub.docker.com → Account Settings → Security |
-| `EC2_HOST` | `54.147.249.94` | EC2 Console → Elastic IP |
-| `EC2_SSH_KEY` | Full contents of `.pem` file | `Get-Content pune-api-key.pem \| Set-Clipboard` |
-| `AWS_ACCESS_KEY_ID` | IAM user access key | IAM → Users → Prince → Security credentials |
-| `AWS_SECRET_ACCESS_KEY` | IAM user secret key | Created alongside access key |
-
-**Optional:**
-
-| Secret Name | Value |
-|---|---|
-| `SLACK_WEBHOOK_URL` | Slack app incoming webhook URL |
-
-### Step 25 — Key Workflow Fixes Applied
-
-**Fix 1: `secrets` context in `if` condition**
-GitHub Actions does not allow `secrets.X != ''` in an `if` expression. Replaced with `continue-on-error: true` on the Slack step.
-
-**Fix 2: Model not in Docker image**
-`models/best_model.pkl` was in `.gitignore` so it was never committed. The GitHub Actions runner checked out code without the model, built the Docker image, and the container started with `model_loaded: false`.
-
-Fix: In the `build` job, added a step to install ML dependencies and run `preprocess.py` and `train.py` before building the Docker image. The model is trained fresh on the GitHub Actions runner and baked into every image:
-```yaml
-- name: Install ML dependencies and train model
-  run: |
-    pip install pandas numpy scikit-learn==1.7.2 scipy joblib openpyxl mlflow
-    python src/data/preprocess.py
-    MLFLOW_TRACKING_URI="sqlite:///mlflow.db" python src/models/train.py
-```
-
-**Fix 3: ECS stability timeout**
-`wait-for-service-stability: true` caused GitHub Actions to hang because ECS reported "not stable" during the rolling update window. The URL was live throughout because old tasks kept serving traffic. Fix: set `wait-for-service-stability: false` and add a verify step instead.
-
-**Fix 4: EKS rollout timeout**
-`kubectl rollout status --timeout=180s` failed because pulling a 1.8GB image from ECR took longer than 180 seconds. Fix: increased to `--timeout=300s || true`. The `|| true` means if it still times out, the job passes anyway — the rollout completes on the cluster regardless of the watcher.
+Verify:
+1. Browser → **https://github.com/YOUR_GITHUB_USERNAME/pune_real_estate_mlops**
+2. You see your files listed on the repository page
 
 ---
 
-## 8. Phase 5 — AWS ECR (Container Registry)
+### Step 26 — Add GitHub Actions Secrets
 
-### Step 26 — Configure AWS CLI
+Go to your repository page on GitHub.
+
+**Navigation path:**
+1. Click the **Settings** tab (last tab in the top navigation row of your repo)
+2. In the **left sidebar**, scroll down to find **Secrets and variables**
+3. Click the small arrow/triangle next to it to expand
+4. Click **Actions** (a sub-item appears below)
+5. The page title says: **Actions secrets and variables**
+6. Click the green **New repository secret** button
+
+Add one secret at a time. For each secret:
+1. Click **New repository secret**
+2. In **Name** field: type the secret name exactly (case-sensitive)
+3. In **Secret** field: paste the value
+4. Click **Add secret**
+
+**Add these 6 secrets:**
+
+**Secret 1: DOCKERHUB_USERNAME**
+- Name: `DOCKERHUB_USERNAME`
+- Value: your Docker Hub username (e.g., `johndoe`)
+
+**Secret 2: DOCKERHUB_TOKEN**
+- Name: `DOCKERHUB_TOKEN`
+- Value: the access token from Docker Hub Security page (Step 23)
+
+**Secret 3: EC2_HOST**
+- Name: `EC2_HOST`
+- Value: your EC2 Elastic IP address (get this in Phase 6 — come back here)
+
+**Secret 4: EC2_SSH_KEY**
+- Name: `EC2_SSH_KEY`
+- Value: the full contents of your `.pem` file
+- To get it: `Get-Content C:\Users\YOUR_NAME\Downloads\YOUR_EC2_KEY_NAME.pem | Set-Clipboard`
+- Then paste into the Secret field
+
+**Secret 5: AWS_ACCESS_KEY_ID**
+- Name: `AWS_ACCESS_KEY_ID`
+- Value: the Access Key ID from your IAM user (get this in Phase 5)
+
+**Secret 6: AWS_SECRET_ACCESS_KEY**
+- Name: `AWS_SECRET_ACCESS_KEY`
+- Value: the Secret Access Key from your IAM user (get this in Phase 5)
+
+---
+
+### Step 27 — The CI/CD Workflow File
+
+The file `.github/workflows/deploy.yml` defines the 6-job pipeline:
+
+```
+Every push to main branch triggers:
+│
+├── Job 1 — test
+│   Install Python → run preprocess.py → run train.py → pytest
+│
+├── Job 2 — build  (runs after test passes)
+│   Install Python → train model → build Docker image →
+│   push to Docker Hub → push to ECR
+│
+├── Job 3 — deploy-ec2  (runs after build)
+│   SSH into EC2 → git pull → pip install → supervisorctl restart
+│
+├── Job 4 — deploy-ecs  (runs after build, parallel to ec2 and eks)
+│   Update ECS task definition with new image → force ECS redeployment
+│
+├── Job 5 — deploy-eks  (runs after build, parallel to ec2 and ecs)
+│   kubectl set image → rollout status (5-minute timeout)
+│
+└── Job 6 — notify  (runs after all three deploys, always)
+    Print summary table → send Slack notification (optional)
+```
+
+---
+
+## 7. Phase 5 — AWS Setup: IAM, CLI, ECR
+
+### Step 28 — Create AWS Account
+
+1. Browser → **https://aws.amazon.com**
+2. Click **Create an AWS Account** (top-right orange button)
+3. Fill in:
+   - Root user email address: your email
+   - AWS account name: e.g., `MyMLOpsAccount`
+4. Click **Verify email address** → check inbox → enter the verification code
+5. Set a root user password (strong password — store it safely)
+6. Fill in contact information (select Personal or Business)
+7. Enter credit/debit card (you will not be charged if using Free Tier resources)
+8. Phone number verification (you receive a call or SMS)
+9. Select **Basic support — Free**
+10. Click **Complete sign up**
+11. Click **Go to the AWS Management Console**
+
+---
+
+### Step 29 — Create an IAM User (Do Not Use Root for Daily Work)
+
+Using the root account for daily operations is unsafe. Create an IAM user.
+
+**Navigation in AWS Console:**
+1. In the top search bar, type `IAM` and press Enter
+2. The IAM dashboard opens
+3. In the **left sidebar**, click **Users**
+4. Click the orange **Create user** button (top-right)
+
+**Step A — User details:**
+- Username: `mlops-deploy` (or any name — record in `my_setup.txt` as `YOUR_IAM_USERNAME`)
+- Tick: **Provide user access to the AWS Management Console** (optional)
+- Click **Next**
+
+**Step B — Set permissions:**
+- Select: **Attach policies directly**
+- In the search box, search for and tick each of these policies:
+  - `AmazonEC2FullAccess`
+  - `AmazonECS_FullAccess`
+  - `CloudWatchFullAccess`
+- Click **Next**
+- Click **Create user**
+
+**Step C — Create access keys:**
+1. Click on the username you just created to open the user page
+2. Click the **Security credentials** tab
+3. Scroll down to **Access keys** section
+4. Click **Create access key**
+5. Use case: select **Application running outside AWS**
+6. Click **Next**
+7. Description tag: `github-actions-key`
+8. Click **Create access key**
+9. You see two values:
+   - **Access key ID** — copy this → paste into `my_setup.txt` as `AWS_ACCESS_KEY_ID`
+   - **Secret access key** — click **Show** → copy it → paste as `AWS_SECRET_ACCESS_KEY`
+10. Click **Done** (you cannot view the secret key again after this)
+
+**IMPORTANT:** The inline policy `eksctl-ecr-permissions` is also required
+for EKS and ECR. Add it after the managed policy limit is reached (see
+Issue 10 in Section 12).
+
+---
+
+### Step 30 — Install and Configure AWS CLI
+
+**Install AWS CLI:**
+```powershell
+winget install Amazon.AWSCLI
+```
+Close and reopen PowerShell after installation. Verify:
+```powershell
+aws --version
+```
+Expected: `aws-cli/2.x.x Python/3.x.x Windows/...`
+
+**Configure:**
 ```powershell
 aws configure
-# AWS Access Key ID: [from IAM → Users → Prince → Security credentials]
-# AWS Secret Access Key: [created alongside access key]
-# Default region name: us-east-1
-# Default output format: json
+```
+You are prompted for 4 values:
+```
+AWS Access Key ID:     [paste YOUR_AWS_ACCESS_KEY_ID]
+AWS Secret Access Key: [paste YOUR_AWS_SECRET_ACCESS_KEY]
+Default region name:   us-east-1
+Default output format: json
 ```
 
-Verify:
+Verify it works:
 ```powershell
 aws sts get-caller-identity
-# Shows: Account: 211125741068, Arn: arn:aws:iam::211125741068:user/Prince
 ```
+Expected output shows your account ID and IAM username.
 
-### Step 27 — Create ECR Repository
+---
+
+### Step 31 — Create ECR Repository
+
 ```powershell
-aws ecr create-repository \
-  --repository-name pune-real-estate-api \
-  --region us-east-1 \
+aws ecr create-repository `
+  --repository-name pune-real-estate-api `
+  --region us-east-1 `
   --image-scanning-configuration scanOnPush=true
 ```
 
-Repository URI: `211125741068.dkr.ecr.us-east-1.amazonaws.com/pune-real-estate-api`
+Output includes:
+```json
+"repositoryUri": "YOUR_AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/pune-real-estate-api"
+```
 
-**Where to verify in AWS Console:**
-1. Go to **https://console.aws.amazon.com**
-2. Search "ECR" → Elastic Container Registry
-3. Click **Repositories** in left sidebar
-4. You should see `pune-real-estate-api` listed
+Note this URI — it is used in the task definition and deployment manifests.
 
-### Step 28 — IAM Permissions Required for ECR Push
-The IAM user needs `AmazonEC2ContainerRegistryFullAccess`. Since the user already had 10 managed policies (the AWS limit), this was added as an inline policy called `eksctl-ecr-permissions` which also covers EKS and CloudFormation.
-
-**The 10-policy limit:** AWS IAM users can only have 10 managed policies attached. Use inline policies to bypass this limit — they are not counted. To add an inline policy:
-- IAM → Users → [username] → Permissions → **Create inline policy** → JSON tab
+**Verify in AWS Console:**
+1. Search `ECR` in the top search bar
+2. Click **Elastic Container Registry**
+3. In the left sidebar, click **Repositories** (under **Private registry**)
+4. You see `pune-real-estate-api` listed
+5. Click it to see details including the repository URI
 
 ---
 
-## 9. Phase 6 — AWS ECS Fargate Deployment
+## 8. Phase 6 — AWS ECS Fargate Deployment
 
-### What ECS Fargate Is
-ECS Fargate runs Docker containers without managing any servers. You define what container to run (task definition), how many copies (service), and AWS handles the underlying compute. An Application Load Balancer distributes traffic across all running tasks.
+### Step 32 — Launch EC2 Instance
 
-### Step 29 — Create IAM Roles for ECS
+**Navigation in AWS Console:**
+1. In the top search bar, type `EC2` and press Enter
+2. The EC2 Dashboard opens
+3. Verify the **Region** selector (top-right, next to your account name)
+   shows **N. Virginia** (us-east-1). If not, click it → scroll to
+   **US East (N. Virginia)** → click it
+4. Click the orange **Launch instance** button
 
-Save `deployment/ecs/ecs-trust-policy.json`:
-```json
+**On the Launch instance page, fill in these settings from top to bottom:**
+
+**Name and tags section:**
+- In the **Name** field, type: `pune-real-estate-api`
+
+**Application and OS Images section:**
+- Click the **Ubuntu** box (Quick Start row of OS options)
+- The AMI automatically changes to:
+  `Ubuntu Server 22.04 LTS (HVM), SSD Volume Type`
+- Confirm it shows **Free tier eligible** (look for the orange badge)
+
+**Instance type section:**
+- The default `t2.micro` is selected (Free tier — 1 vCPU, 1GB RAM)
+- For production with real traffic: change to `t3.small` (2 vCPU, 2GB RAM)
+- Click the dropdown → type `t3.small` → select it
+
+**Key pair (login) section:**
+- Click **Create new key pair**
+- A dialog appears:
+  - Key pair name: `pune-api-key`
+  - Key pair type: **RSA**
+  - Private key file format: **.pem**
+- Click **Create key pair**
+- Your browser **automatically downloads** `pune-api-key.pem`
+- Go to Windows Explorer → Downloads folder → move `pune-api-key.pem`
+  to a safe place (e.g., `C:\Users\YOUR_NAME\Documents\AWS-Keys\`)
+- **CRITICAL: This file is your only way to SSH into this server.
+  If you lose it, you cannot connect. Do not delete it.**
+
+**Network settings section:**
+- Click the **Edit** button (top-right of this section)
+- Under **Firewall (security groups)**: keep **Create security group** selected
+- Security group name: `pune-api-sg`
+- Description: `Security group for Pune API EC2`
+- Under **Inbound security group rules**, you already see SSH (port 22)
+- For the SSH rule: in **Source type** dropdown, select **My IP**
+  (this restricts SSH access to only your current IP address)
+- Click **Add security group rule** → adds a new row:
+  - Type: `HTTP`
+  - Port: `80`
+  - Source type: `Anywhere`
+- Click **Add security group rule** again:
+  - Type: `HTTPS`
+  - Port: `443`
+  - Source type: `Anywhere`
+- **Do NOT add port 8000** — Nginx will forward port 80 to port 8000
+
+**Configure storage section:**
+- Change the size from 8 to **20** GiB
+- Keep type: `gp3`
+
+**Summary panel (right side):**
+- Verify: 1 instance, Ubuntu 22.04, t3.small (or t2.micro)
+- Click the orange **Launch instance** button
+
+**After launch:**
+1. A green success banner appears: *"Successfully initiated launch of instance i-0abc123..."*
+2. Click the **instance ID** link (blue text like `i-0abc123def456`)
+3. The Instances page opens with your new instance highlighted
+4. Wait until the **Instance state** column shows **Running** (green dot)
+   and **Status check** shows **2/2 checks passed**
+   (click the refresh icon at the top-right of the table to update)
+5. In the details panel at the bottom, find **Public IPv4 address**
+6. Copy this IP → paste into `my_setup.txt` as `YOUR_EC2_IP`
+
+---
+
+### Step 33 — Associate Elastic IP (Permanent IP Address)
+
+EC2 instances get a new IP address every time they restart. An Elastic IP
+stays the same permanently.
+
+**Navigation:**
+1. In the EC2 left sidebar, scroll down to **Network & Security**
+2. Click **Elastic IPs**
+3. Click **Allocate Elastic IP address** (top-right)
+4. Network border group: keep the default
+5. Click **Allocate**
+6. The new Elastic IP appears in the table
+7. Click the **Actions** dropdown (top-right) → click **Associate Elastic IP address**
+8. In the dialog:
+   - **Resource type**: Instance
+   - **Instance**: click the box → select your `pune-real-estate-api` instance
+   - **Private IP address**: keep the default
+9. Click **Associate**
+10. Back on the Elastic IPs page, note the **Allocated IPv4 address**
+11. Copy it → paste into `my_setup.txt` as `YOUR_EC2_ELASTIC_IP`
+
+---
+
+### Step 34 — SSH into EC2 from Windows
+
+First, set permissions on your key file (Windows requires this):
+```powershell
+$pem = "C:\Users\YOUR_NAME\Documents\AWS-Keys\pune-api-key.pem"
+icacls $pem /inheritance:r
+icacls $pem /grant:r "${env:USERNAME}:(R)"
+```
+
+Connect:
+```powershell
+ssh -i C:\Users\YOUR_NAME\Documents\AWS-Keys\pune-api-key.pem ubuntu@YOUR_EC2_ELASTIC_IP
+```
+
+First connection shows:
+```
+The authenticity of host 'x.x.x.x' can't be established.
+Are you sure you want to continue connecting (yes/no)?
+```
+Type `yes` and press Enter.
+
+You now see the EC2 prompt:
+```
+ubuntu@ip-x-x-x-x:~$
+```
+You are inside the EC2 server.
+
+---
+
+### Step 35 — Set Up EC2 Server
+
+Run these commands **inside the EC2 SSH session**:
+
+```bash
+# 1. Update system packages
+sudo apt-get update -y && sudo apt-get upgrade -y
+
+# 2. Install Docker
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+
+# 3. Install Nginx, Certbot, git, Python venv
+sudo apt-get install -y nginx certbot python3-certbot-nginx python3-venv git curl
+
+# 4. Log out so Docker group membership takes effect
+exit
+```
+
+SSH back in:
+```powershell
+ssh -i C:\Users\YOUR_NAME\Documents\AWS-Keys\pune-api-key.pem ubuntu@YOUR_EC2_ELASTIC_IP
+```
+
+```bash
+# 5. Verify Docker works without sudo
+docker ps
+# Expected: empty table with headers, no error
+
+# 6. Clone your GitHub repo
+git clone https://github.com/YOUR_GITHUB_USERNAME/pune_real_estate_mlops.git
+cd pune_real_estate_mlops
+
+# 7. Create virtual environment and install production deps
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements_docker.txt
+
+# 8. Run the pipeline to create the model
+python src/data/preprocess.py
+python src/models/train.py
+
+# 9. Start the API manually to verify it works
+uvicorn src.api.fastapi_app:app --host 0.0.0.0 --port 8000 &
+sleep 10
+curl http://localhost:8000/health
+# Expected: {"status":"ok","model_loaded":true}
+kill %1   # stop the background uvicorn
+```
+
+---
+
+### Step 36 — Configure Nginx as Reverse Proxy
+
+Still inside the EC2 SSH session:
+```bash
+sudo tee /etc/nginx/sites-available/pune_api > /dev/null <<'NGINX'
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+    }
+}
+NGINX
+
+sudo ln -sf /etc/nginx/sites-available/pune_api /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+```
+
+Expected: `nginx: configuration file ... test is successful`
+
+```bash
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+```
+
+---
+
+### Step 37 — Configure Supervisor for 24/7 API Process
+
+Supervisor keeps the API running after restarts and crashes.
+
+```bash
+sudo apt-get install -y supervisor
+
+sudo tee /etc/supervisor/conf.d/pune_api.conf > /dev/null <<EOF
+[program:pune_api]
+command=$(pwd)/.venv/bin/uvicorn src.api.fastapi_app:app --host 0.0.0.0 --port 8000
+directory=$(pwd)
+user=ubuntu
+autostart=true
+autorestart=true
+stdout_logfile=/var/log/pune_api.log
+stderr_logfile=/var/log/pune_api_error.log
+environment=PYTHONUNBUFFERED=1
+EOF
+
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl start pune_api
+sudo supervisorctl status
+```
+
+Expected: `pune_api    RUNNING   pid 1234, uptime 0:00:05`
+
+Test via Nginx (port 80):
+```bash
+curl http://localhost/health
+```
+Expected: `{"status":"ok","model_loaded":true}`
+
+Test from your Windows machine:
+```powershell
+Invoke-WebRequest -Uri "http://YOUR_EC2_ELASTIC_IP/health" -UseBasicParsing | Select-Object -ExpandProperty Content
+```
+
+Open Swagger UI in browser: **http://YOUR_EC2_ELASTIC_IP/docs**
+
+---
+
+### Step 38 — Create ECS Infrastructure
+
+**Create IAM roles:**
+```powershell
+# Save trust policy
+@'
 {
   "Version": "2012-10-17",
   "Statement": [{
@@ -605,23 +1174,22 @@ Save `deployment/ecs/ecs-trust-policy.json`:
     "Action": "sts:AssumeRole"
   }]
 }
-```
+'@ | Out-File -Encoding utf8 deployment/ecs/ecs-trust-policy.json
 
-```powershell
-# ecsTaskExecutionRole — allows ECS to pull images and write logs
-aws iam create-role --role-name ecsTaskExecutionRole \
+# Create execution role (allows ECS to pull images and write logs)
+aws iam create-role --role-name ecsTaskExecutionRole `
   --assume-role-policy-document file://deployment/ecs/ecs-trust-policy.json
-aws iam attach-role-policy --role-name ecsTaskExecutionRole \
+aws iam attach-role-policy --role-name ecsTaskExecutionRole `
   --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
-# ecsTaskRole — application-level permissions (CloudWatch logs)
-aws iam create-role --role-name ecsTaskRole \
+# Create task role (application-level permissions)
+aws iam create-role --role-name ecsTaskRole `
   --assume-role-policy-document file://deployment/ecs/ecs-trust-policy.json
-aws iam attach-role-policy --role-name ecsTaskRole \
+aws iam attach-role-policy --role-name ecsTaskRole `
   --policy-arn arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
 ```
 
-### Step 30 — Create CloudWatch Log Group and ECS Cluster
+**Create CloudWatch log group and ECS cluster:**
 ```powershell
 aws logs create-log-group --log-group-name /ecs/pune-api --region us-east-1
 aws logs put-retention-policy --log-group-name /ecs/pune-api --retention-in-days 30
@@ -629,159 +1197,138 @@ aws logs put-retention-policy --log-group-name /ecs/pune-api --retention-in-days
 aws ecs create-cluster --cluster-name pune-api-cluster --capacity-providers FARGATE
 ```
 
-**Where to verify in AWS Console:**
-1. Search "ECS" → Elastic Container Service
-2. Click **Clusters** in left sidebar
-3. Click **pune-api-cluster**
-4. You should see the cluster with Fargate capacity provider
-
-### Step 31 — Task Definition
-
-File: `deployment/ecs/task-definition.json`
-
-Key settings:
-- `cpu: "512"` — 0.5 vCPU
-- `memory: "1024"` — 1 GB RAM
-- `networkMode: "awsvpc"` — required for Fargate
-- `image`: ECR URI with SHA tag (updated by GitHub Actions per deployment)
-- Health check: `curl -f http://localhost:8000/health`
-- Logs: CloudWatch `/ecs/pune-api` log group
-
-Register:
+**Get your VPC and subnet IDs:**
 ```powershell
-aws ecs register-task-definition \
-  --cli-input-json file://deployment/ecs/task-definition.json
+$vpc = aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" `
+  --query "Vpcs[0].VpcId" --output text
+$subnets = aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc" `
+  --query "Subnets[*].SubnetId" --output text
+Write-Output "VPC: $vpc"
+Write-Output "Subnets: $subnets"
 ```
+Copy these values into `my_setup.txt`.
 
-### Step 32 — Security Groups
-
+**Create security groups:**
 ```powershell
-$VPC = "vpc-0803d39d79405b293"
+$VPC = "YOUR_VPC_ID"
 
-# ALB security group — public inbound on 80 and 443
-$ALB_SG = aws ec2 create-security-group \
-  --group-name pune-alb-sg \
-  --description "ALB for pune-api ECS" \
+$ALB_SG = aws ec2 create-security-group `
+  --group-name pune-alb-sg `
+  --description "ALB for pune-api ECS" `
   --vpc-id $VPC --query "GroupId" --output text
-aws ec2 authorize-security-group-ingress --group-id $ALB_SG \
-  --protocol tcp --port 80 --cidr 0.0.0.0/0
-aws ec2 authorize-security-group-ingress --group-id $ALB_SG \
-  --protocol tcp --port 443 --cidr 0.0.0.0/0
 
-# ECS task security group — only accepts traffic from the ALB
-$TASK_SG = aws ec2 create-security-group \
-  --group-name pune-ecs-task-sg \
-  --description "ECS tasks for pune-api" \
+aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 80  --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id $ALB_SG --protocol tcp --port 443 --cidr 0.0.0.0/0
+
+$TASK_SG = aws ec2 create-security-group `
+  --group-name pune-ecs-task-sg `
+  --description "ECS tasks for pune-api" `
   --vpc-id $VPC --query "GroupId" --output text
-aws ec2 authorize-security-group-ingress --group-id $TASK_SG \
+
+aws ec2 authorize-security-group-ingress --group-id $TASK_SG `
   --protocol tcp --port 8000 --source-group $ALB_SG
 ```
 
-Port 8000 is never opened directly to the internet — only the ALB can reach it.
-
-### Step 33 — Application Load Balancer
-
-**In AWS Console:**
-1. Go to EC2 → **Load Balancers** → **Create Load Balancer** → **Application Load Balancer**
-2. Name: `pune-api-alb`
-3. Scheme: **Internet-facing**
-4. Select at least 3 availability zones (us-east-1a, us-east-1b, us-east-1c)
-5. Security group: select `pune-alb-sg`
-6. **Target group** — create new:
-   - Name: `pune-api-tg`
-   - Target type: **IP** (required for Fargate — not Instance)
-   - Protocol: HTTP | Port: 8000
+**Create ALB in AWS Console:**
+1. Search `EC2` → Click **Load Balancers** in the left sidebar
+   (under Load Balancing)
+2. Click **Create load balancer**
+3. Under **Application Load Balancer**, click **Create**
+4. **Basic configuration:**
+   - Name: `pune-api-alb`
+   - Scheme: **Internet-facing**
+   - IP address type: **IPv4**
+5. **Network mapping:** Tick at least 3 availability zones (us-east-1a, 1b, 1c)
+6. **Security groups:** Select `pune-alb-sg`
+7. **Listeners and routing:** For Port 80:
+   - Click **Create target group** (opens in a new tab)
+   - Target type: **IP addresses** (NOT Instance — Fargate uses IP targets)
+   - Target group name: `pune-api-tg`
+   - Protocol: HTTP, Port: 8000
+   - Health check protocol: HTTP
    - Health check path: `/health`
-   - Healthy threshold: 2 | Unhealthy threshold: 3
-7. Create
+   - Healthy threshold: 2, Unhealthy threshold: 3
+   - Click **Next** → **Create target group**
+   - Go back to the ALB tab, refresh the target group dropdown, select `pune-api-tg`
+8. Click **Create load balancer**
+9. On the load balancers page, click your new ALB → copy the **DNS name** →
+   save as `YOUR_ECS_ALB_DNS`
 
-Via CLI:
+**Update task definition with your account ID:**
+
+Open `deployment/ecs/task-definition.json` in VS Code.
+Replace every occurrence of `YOUR_AWS_ACCOUNT_ID` with your actual account ID.
+Save the file.
+
+**Register task definition:**
 ```powershell
-$ALB_ARN = aws elbv2 create-load-balancer \
-  --name pune-api-alb \
-  --subnets subnet-0a8ba0a09aaffa2f7 subnet-0d5a8a16c7aa5a916 subnet-078fe7d07f3cb36dc \
-  --security-groups sg-02c81737a69b5eb54 \
-  --scheme internet-facing --type application \
-  --query "LoadBalancers[0].LoadBalancerArn" --output text
-
-$TG_ARN = aws elbv2 create-target-group \
-  --name pune-api-tg --protocol HTTP --port 8000 \
-  --vpc-id vpc-0803d39d79405b293 --target-type ip \
-  --health-check-path /health \
-  --query "TargetGroups[0].TargetGroupArn" --output text
-
-aws elbv2 create-listener \
-  --load-balancer-arn $ALB_ARN --protocol HTTP --port 80 \
-  --default-actions Type=forward,TargetGroupArn=$TG_ARN
+aws ecs register-task-definition `
+  --cli-input-json file://deployment/ecs/task-definition.json
 ```
 
-### Step 34 — ECS Service
-
+**Create ECS Service:**
 ```powershell
-aws ecs create-service \
-  --cluster pune-api-cluster \
-  --service-name pune-api-service \
-  --task-definition pune-api-task:1 \
-  --desired-count 2 \
-  --launch-type FARGATE \
-  --network-configuration "awsvpcConfiguration={subnets=[subnet-0a8ba0a09aaffa2f7,subnet-0d5a8a16c7aa5a916,subnet-078fe7d07f3cb36dc],securityGroups=[sg-0732664fe9d839bc4],assignPublicIp=ENABLED}" \
-  --load-balancers "targetGroupArn=$TG_ARN,containerName=pune-api,containerPort=8000" \
-  --health-check-grace-period-seconds 60 \
-  --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100"
+$TG_ARN  = "YOUR_TG_ARN"
+$TASK_SG = "YOUR_TASK_SG_ID"
+$SUBNETS = "YOUR_SUBNET_ID_1,YOUR_SUBNET_ID_2,YOUR_SUBNET_ID_3"
+
+aws ecs create-service `
+  --cluster pune-api-cluster `
+  --service-name pune-api-service `
+  --task-definition pune-api-task:1 `
+  --desired-count 2 `
+  --launch-type FARGATE `
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$TASK_SG],assignPublicIp=ENABLED}" `
+  --load-balancers "targetGroupArn=$TG_ARN,containerName=pune-api,containerPort=8000" `
+  --health-check-grace-period-seconds 60
 ```
 
-`desired-count: 2` — always two tasks for high availability.
-`minimumHealthyPercent: 100` — never drop below 2 tasks during updates (zero downtime).
+**Verify ECS in AWS Console:**
+1. Search `ECS` in the search bar
+2. Click **Elastic Container Service**
+3. Click **Clusters** in the left sidebar
+4. Click **pune-api-cluster**
+5. Click the **Services** tab
+6. Click **pune-api-service**
+7. Click the **Tasks** tab — you see 2 tasks starting
+8. Wait 2-3 minutes → refresh → both tasks show **RUNNING**
+9. Click the **Events** tab to see the deployment timeline
 
-**Where to verify:**
-1. ECS → Clusters → pune-api-cluster → **Services** tab
-2. Click `pune-api-service`
-3. **Tasks** tab — should show 2 running tasks
-4. **Events** tab — shows deployment history
-
-### Step 35 — Verify ECS is Working
+Test via ALB:
 ```powershell
-aws ecs describe-services \
-  --cluster pune-api-cluster --services pune-api-service \
-  --query "services[0].{Status:status,Running:runningCount,Desired:desiredCount}" \
-  --output table
-# Expected: Status=ACTIVE, Running=2, Desired=2
-
-# Check target health
-aws elbv2 describe-target-health \
-  --target-group-arn $TG_ARN \
-  --query "TargetHealthDescriptions[*].{IP:Target.Id,State:TargetHealth.State}"
-# Expected: 2 targets with State=healthy
+Invoke-WebRequest -Uri "http://YOUR_ECS_ALB_DNS/health" -UseBasicParsing | Select-Object -ExpandProperty Content
 ```
 
 ---
 
-## 10. Phase 7 — AWS EKS Kubernetes Deployment
+## 9. Phase 7 — AWS EKS Kubernetes Deployment
 
-### What EKS Kubernetes Is
-EKS is Amazon's managed Kubernetes service. You get a control plane managed by AWS and worker nodes (EC2 instances) that run your application in containers called Pods. Key concepts:
-- **Pod** — one running instance of your container
-- **Deployment** — manages a set of identical pods, handles rolling updates
-- **Service** — internal load balancer that routes traffic to pods
-- **Ingress** — external HTTP router (sits in front of Services)
-- **HPA** — Horizontal Pod Autoscaler, scales pod count based on CPU/memory
+### Step 39 — Install Kubernetes Tools
 
-### Step 36 — Install Required Tools
-
-**kubectl** (Kubernetes CLI):
+**Install kubectl:**
 ```powershell
 winget install Kubernetes.kubectl
+# Close and reopen PowerShell
 kubectl version --client
 ```
 
-**eksctl** (EKS cluster manager):
-Download `eksctl.exe` from https://github.com/weaveworks/eksctl/releases/latest
-Move to `C:\Windows\System32\`
+**Install eksctl:**
+1. Browser → **https://github.com/weaveworks/eksctl/releases/latest**
+2. Under **Assets**, find `eksctl_Windows_amd64.zip` → click to download
+3. Open the zip file → drag `eksctl.exe` out
+4. Move `eksctl.exe` to `C:\Windows\System32\` (requires admin)
+5. Open PowerShell and verify:
 ```powershell
 eksctl version
 ```
 
-### Step 37 — Create EKS Cluster
+---
+
+### Step 40 — Create EKS Cluster
+
+**WARNING: This costs approximately $0.10/hour for the control plane (~$73/month),
+plus EC2 costs for worker nodes (~$30/month for 2× t3.small).
+Total: ~$103/month. Delete the cluster when not in use.**
 
 ```powershell
 eksctl create cluster `
@@ -789,345 +1336,413 @@ eksctl create cluster `
   --region us-east-1 `
   --nodegroup-name pune-api-nodes `
   --node-type t3.small `
-  --nodes 2 --nodes-min 1 --nodes-max 4 `
-  --managed --with-oidc --full-ecr-access
+  --nodes 2 `
+  --nodes-min 1 `
+  --nodes-max 4 `
+  --managed `
+  --with-oidc `
+  --full-ecr-access
 ```
 
-This takes **15-20 minutes**. eksctl creates two CloudFormation stacks:
-1. `eksctl-pune-api-eks-cluster` — the control plane (EKS master)
-2. `eksctl-pune-api-eks-nodegroup-pune-api-nodes` — the 2 worker EC2 nodes
-
-When complete:
+This takes **15-20 minutes**. Output shows CloudFormation stacks being created.
+When complete, the last two lines read:
 ```
 ✔  EKS cluster "pune-api-eks" in "us-east-1" region is ready
-✔  saved kubeconfig as "C:\Users\admin\.kube\config"
+✔  saved kubeconfig as "C:\Users\YOUR_NAME\.kube\config"
 ```
 
 kubectl is now automatically configured to talk to the cluster.
 
+Verify:
 ```powershell
 kubectl get nodes
-# Expected: 2 nodes in Ready status
 ```
+Expected: 2 nodes, both with STATUS = `Ready`
 
-**Where to verify in AWS Console:**
-1. Search "EKS" → Elastic Kubernetes Service
-2. Click **Clusters** → **pune-api-eks**
-3. **Compute** tab → Node groups → pune-api-nodes → 2 nodes
+**Verify in AWS Console:**
+1. Search `EKS` → click **Elastic Kubernetes Service**
+2. Click **Clusters** in the left sidebar
+3. Click **pune-api-eks**
+4. Click the **Compute** tab
+5. Scroll to **Node groups** → click `pune-api-nodes`
+6. You see 2 nodes listed with status **Ready**
 
-### Step 38 — Apply Kubernetes Manifests
+---
 
-All manifests are in the `k8s/` folder. Apply in this order:
+### Step 41 — Update k8s Manifests with Your Account ID
+
+Open `k8s/deployment.yaml` in VS Code.
+Find the line:
+```yaml
+image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/pune-real-estate-api:latest
+```
+Replace `YOUR_AWS_ACCOUNT_ID` with your actual account ID. Save.
+
+---
+
+### Step 42 — Apply Kubernetes Manifests
 
 ```powershell
-cd C:\Users\admin\Desktop\pune_real_estate_mlops
+cd C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops
 
-kubectl apply -f k8s/namespace.yaml    # creates pune-api namespace
-kubectl apply -f k8s/configmap.yaml    # APP_ENV, MODEL_PATH, LOG_LEVEL etc.
-kubectl apply -f k8s/secret.yaml       # API_KEY (base64 encoded)
-kubectl apply -f k8s/deployment.yaml   # 3 replicas, rolling update config
-kubectl apply -f k8s/service.yaml      # ClusterIP service on port 80
-kubectl apply -f k8s/hpa.yaml          # auto-scale 2→10 pods at 70% CPU
-```
+# Apply in dependency order (namespace first)
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/secret.yaml
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/hpa.yaml
 
-`deployment.yaml` key settings:
-- `replicas: 3` — 3 pods spread across 2 nodes
-- `maxSurge: 1` — can temporarily have 4 pods during an update
-- `maxUnavailable: 0` — never drop below 3 during update (zero downtime)
-- `readinessProbe` — pod only receives traffic after `/health` returns 200
-- `livenessProbe` — pod is restarted if `/health` fails 3 times
-
-### Step 39 — Install Nginx Ingress Controller
-
-Nginx Ingress creates an AWS Network Load Balancer that routes external HTTP traffic into the cluster:
-
-```powershell
+# Install Nginx Ingress Controller (creates the public LoadBalancer)
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/aws/deploy.yaml
 
-# Wait for it to be ready
-Start-Sleep -Seconds 60
+# Wait for LoadBalancer hostname to be assigned
+Start-Sleep -Seconds 90
 kubectl get svc -n ingress-nginx ingress-nginx-controller
-# EXTERNAL-IP column shows the NLB hostname — this is your public URL
 ```
 
-### Step 40 — Apply Ingress
+The `EXTERNAL-IP` column shows a hostname like:
+`a1b2c3d4e5f6g7h8-12345678.us-east-1.elb.amazonaws.com`
 
-`k8s/ingress.yaml` was initially configured with a domain name placeholder. Since no custom domain is set up, we removed the host field to make it a catch-all:
+Copy this → save as `YOUR_EKS_LB_DNS`
 
-```yaml
-rules:
-  - http:             # no host = catches all traffic regardless of hostname
-      paths:
-        - path: /
-          pathType: Prefix
-          backend:
-            service:
-              name: pune-api-service
-              port:
-                number: 80
-```
-
+**Apply ingress and monitoring:**
 ```powershell
 kubectl apply -f k8s/ingress.yaml
-```
-
-### Step 41 — Deploy Prometheus and Grafana
-
-```powershell
 kubectl apply -f k8s/monitoring/prometheus.yaml
 kubectl apply -f k8s/monitoring/grafana.yaml
 ```
 
-Both run as single-pod deployments inside the `pune-api` namespace with ClusterIP services (accessible only via port-forward, not publicly exposed for security).
-
-### Step 42 — Verify All Pods Running
-
+**Verify all pods are running:**
 ```powershell
 kubectl get pods -n pune-api
 ```
 
-Expected output:
+Expected (all showing `1/1 Running`):
 ```
-NAME                          READY   STATUS    RESTARTS   AGE
-grafana-xxx                   1/1     Running   0          2m
-prometheus-xxx                1/1     Running   0          2m
-pune-api-xxx-1                1/1     Running   0          5m
-pune-api-xxx-2                1/1     Running   0          5m
-pune-api-xxx-3                1/1     Running   0          5m
+NAME                          READY   STATUS    RESTARTS
+grafana-xxx                   1/1     Running   0
+prometheus-xxx                1/1     Running   0
+pune-api-xxx-1                1/1     Running   0
+pune-api-xxx-2                1/1     Running   0
+pune-api-xxx-3                1/1     Running   0
 ```
 
-### Step 43 — Test the Kubernetes API
-
+**Test EKS API:**
 ```powershell
-$EKS_LB = "a10b8a261812c4320acea02fe2f41c3a-608ac9cb7c009e77.elb.us-east-1.amazonaws.com"
-
-Invoke-WebRequest -Uri "http://$EKS_LB/health" -UseBasicParsing | Select-Object -ExpandProperty Content
-# Response: {"status":"ok","model_loaded":true}
-
-Invoke-WebRequest -Method POST -Uri "http://$EKS_LB/predict" `
-  -ContentType "application/json" `
-  -Body '{"area_sqft":1200,"amenity_score":5,"has_clubhouse":1,"has_school":1,"location":3,"sub_area":5,"property_type":1,"company_name":2}' `
-  -UseBasicParsing | Select-Object -ExpandProperty Content
-# Response: {"predicted_price_lakhs":87.44,"predicted_price_millions":8.744,...}
+Invoke-WebRequest -Uri "http://YOUR_EKS_LB_DNS/health" -UseBasicParsing | Select-Object -ExpandProperty Content
 ```
-
-### Step 44 — Configure EKS deploy in GitHub Actions
-
-The `deploy-eks` job in the workflow:
-1. Configures AWS credentials
-2. Runs `aws eks update-kubeconfig` to connect kubectl to the cluster
-3. Runs `kubectl set image deployment/pune-api pune-api=ECR_IMAGE:SHA`
-4. Runs `kubectl rollout status --timeout=300s || true`
-   - The `|| true` means the job passes even if rollout status times out
-   - The actual rollout continues on the cluster and completes successfully
-   - The URL remains live throughout because old pods serve traffic until new pods are ready
+Expected: `{"status":"ok","model_loaded":true}`
 
 ---
 
-## 11. Phase 8 — Monitoring Dashboards
+## 10. Phase 8 — Monitoring Dashboards
 
-### Dashboard 1 — Swagger UI (No Setup Required)
-Browser only. Tests the API interactively.
-- EC2: `http://54.147.249.94:8000/docs`
-- ECS: `http://pune-api-alb-409088602.us-east-1.elb.amazonaws.com/docs`
-- EKS: `http://a10b8a261812c4320acea02fe2f41c3a-608ac9cb7c009e77.elb.us-east-1.amazonaws.com/docs`
+### Dashboard 1 — Swagger UI (Available Immediately, No Setup)
 
-Click **POST /predict** → **Try it out** → modify the JSON → **Execute** → see the predicted price.
+Open directly in your browser:
+- EC2: `http://YOUR_EC2_ELASTIC_IP/docs`
+- ECS: `http://YOUR_ECS_ALB_DNS/docs`
+- EKS: `http://YOUR_EKS_LB_DNS/docs`
 
-### Dashboard 2 — Prometheus
+**Using Swagger UI:**
+1. Page loads showing three sections: Monitoring, Prediction
+2. To test health: click **GET /health** → click **Try it out** →
+   click **Execute** → see response below
+3. To test prediction: click **POST /predict** → click **Try it out** →
+   edit the JSON in the **Request body** field → click **Execute** →
+   see the predicted price in the response
 
+---
+
+### Dashboard 2 — Grafana (Visual Charts)
+
+Grafana runs inside EKS. Its service has a public LoadBalancer URL.
+
+Get the URL:
 ```powershell
-kubectl port-forward svc/prometheus 9090:9090 -n pune-api
+kubectl get svc grafana -n pune-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 ```
-Open **http://localhost:9090**
+Copy the output → this is `YOUR_GRAFANA_LB_DNS`
+
+Open in browser: `http://YOUR_GRAFANA_LB_DNS:3000`
+
+**Login:**
+- Username: `admin`
+- Password: `PuneAPI@2026`
+  *(Change this in production: Grafana → Profile → Change Password)*
+
+**Import the pre-built dashboard:**
+1. On the Grafana home page, look at the **left sidebar**
+2. Hover over the four-squares icon (Dashboards)
+3. Click **Import** in the submenu
+4. The Import page appears
+5. Click **Upload JSON file**
+6. A file picker opens — navigate to:
+   `C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops\monitoring\grafana_dashboard.json`
+7. Select the file → click Open
+8. The import form shows the dashboard details
+9. In the **Prometheus** dropdown, select your Prometheus data source
+10. Click **Import**
+11. The dashboard opens showing 6 panels:
+    - Request Rate (requests per second)
+    - Response Time (P50/P95/P99 latencies)
+    - Error Rate (percentage of 5xx responses)
+    - Running Pod Count
+    - Prediction Value Distribution
+    - CPU and Memory usage per pod
+
+**To make a panel full-screen:** Click the panel title → click **View**
+
+---
+
+### Dashboard 3 — Prometheus (Raw Metrics Query)
+
+Get the URL:
+```powershell
+kubectl get svc prometheus -n pune-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+```
+Open in browser: `http://YOUR_PROMETHEUS_LB_DNS:9090`
+
+**Using Prometheus:**
+1. The page has a search box at the top with **Expression** placeholder text
+2. Click in the box and type a query, then click **Execute**
 
 Useful queries:
 ```
-# Requests per second to /predict
+# How many requests per second hit /predict
 rate(http_requests_total{handler="/predict"}[5m])
 
-# P99 response latency
+# P99 response time in seconds
 histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
 
-# Error rate percentage
+# Error rate as a percentage
 100 * rate(http_requests_total{status_code=~"5.."}[5m]) / rate(http_requests_total[5m])
 
 # Number of healthy API pods
 count(up{job="pune-api"} == 1)
 ```
 
-### Dashboard 3 — Grafana
+3. Click **Graph** tab to see the metric as a time-series chart
+4. Click **Table** tab to see the current numeric values
 
+---
+
+### Dashboard 4 — AWS CloudWatch (EC2 + ECS Metrics)
+
+**Run this once to create all dashboards and alarms:**
 ```powershell
-kubectl port-forward svc/grafana 3000:3000 -n pune-api
-```
-Open **http://localhost:3000** → login: `admin` / `PuneAPI@2026`
-
-**Import the pre-built dashboard:**
-1. Left sidebar → click the **+** icon → **Import**
-2. Click **Upload JSON file**
-3. Select: `monitoring/grafana_dashboard.json`
-4. Select **Prometheus** as the datasource → **Import**
-
-Dashboard panels:
-- Request Rate (req/s)
-- Response Time (p50/p95/p99)
-- Error Rate %
-- Running Pod Count
-- Prediction Value Distribution
-- CPU and Memory per Pod
-
-### Dashboard 4 — CloudWatch (AWS Console)
-
-**Create dashboards and alarms once:**
-```powershell
+cd C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops
 .\.venv\Scripts\Activate.ps1
 pip install boto3
 
 python monitoring/cloudwatch_setup.py `
-  --alb-arn "arn:aws:elasticloadbalancing:us-east-1:211125741068:loadbalancer/app/pune-api-alb/f289cf745031a579" `
-  --email shadrack.n159@gmail.com
+  --alb-arn "YOUR_ALB_ARN" `
+  --email YOUR_EMAIL
 ```
 
-Confirm the subscription email that arrives in your inbox.
+Output shows alarms and dashboard created. Check your email — a confirmation
+message arrives from AWS Notifications. **Click Confirm subscription** in that
+email or alarms will not send notifications.
 
-**View in AWS Console:**
-1. Go to **https://console.aws.amazon.com**
-2. Region: **us-east-1 (N. Virginia)**
-3. Search "CloudWatch" → Click **Dashboards** → **PuneRealEstateAPI**
+**Open the dashboard in AWS Console:**
+1. In the AWS Console search bar, type `CloudWatch` → press Enter
+2. In the left sidebar, click **Dashboards**
+3. In the dashboard list, click **PuneRealEstateAPI**
+4. Four charts appear:
+   - Request Count (per 5 minutes)
+   - 5xx and 4xx error counts
+   - Response time P50/P95/P99
+   - Healthy host count
 
-Alarms created:
-- `pune-api-5xx-error-rate` — triggers if >10 errors in 5 minutes
-- `pune-api-high-latency` — triggers if P99 > 2 seconds
-- `pune-api-unhealthy-hosts` — triggers if healthy host count drops below 1
-
-### Dashboard 5 — MLflow (Local Experiment Tracking)
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
-```
-Open **http://localhost:5000**
-
-Click the experiment `pune_real_estate_price_prediction` → see all 5 model runs. Click any run to see its full metric breakdown. Use the **Compare** button to view runs side by side.
+**To see alarms:**
+1. Left sidebar → click **Alarms** → click **All alarms**
+2. Three alarms are listed:
+   - `pune-api-5xx-error-rate` — fires if >10 errors in 5 minutes
+   - `pune-api-high-latency` — fires if P99 > 2 seconds
+   - `pune-api-unhealthy-hosts` — fires if healthy hosts < 1
 
 ---
 
-## 12. All Issues Faced and How They Were Fixed
+### Dashboard 5 — MLflow (Local Experiment Tracking Only)
+
+MLflow tracks model training experiments locally. It is not deployed to cloud.
+
+```powershell
+cd C:\Users\YOUR_NAME\Desktop\pune_real_estate_mlops
+.\.venv\Scripts\Activate.ps1
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
+```
+
+Open browser → **http://localhost:5000**
+
+**Navigating MLflow:**
+1. Left sidebar shows **Experiments**
+2. Click **pune_real_estate_price_prediction**
+3. A table shows 5 rows (one per model run)
+4. Click the **test_r2** column header to sort descending — GBM appears first
+5. Tick the checkbox on any two rows → click **Compare** to see them side-by-side
+6. Click any row (run name) to see: all parameters, all metrics,
+   charts of metric values, and the saved model artifact
+
+Press **Ctrl+C** in the terminal to stop MLflow.
+
+---
+
+## 11. CI/CD Pipeline Explained
+
+### How GitHub Actions Works
+
+Every time you push code to the `main` branch on GitHub:
+1. GitHub detects the push
+2. GitHub starts a fresh Ubuntu virtual machine (the **runner**)
+3. The runner executes the jobs defined in `.github/workflows/deploy.yml`
+4. Each job runs its steps in sequence
+5. You can watch the progress in real time:
+
+**How to watch a pipeline run:**
+1. Go to `https://github.com/YOUR_GITHUB_USERNAME/pune_real_estate_mlops`
+2. Click the **Actions** tab (between Pull requests and Security in the top nav)
+3. The most recent workflow run appears at the top of the list
+4. Click the run name (e.g., "fix: train model in build job...")
+5. The run detail page shows a diagram with 6 job boxes
+6. Click any job box to see its step-by-step log
+7. Expand any step by clicking its row to see the full output
+8. A green tick (✓) = success. Red X = failed. Yellow spinning circle = running.
+
+### What Each Job Does
+
+**Job 1 — test (~3-5 min)**
+- Starts a fresh Ubuntu machine
+- Installs Python 3.10
+- Installs ML packages
+- Runs `src/data/preprocess.py` → creates `data/processed/pune_features.csv`
+- Runs `src/models/train.py` → creates `models/best_model.pkl`
+- Runs `pytest tests/` (or skips if no tests)
+- If any step fails, all remaining jobs are cancelled
+
+**Job 2 — build (~8-15 min, runs after test)**
+- Fresh Ubuntu machine with Docker pre-installed
+- Installs ML packages AGAIN and trains the model AGAIN
+  *(This is done here so the model is present when Docker copies files)*
+- Logs into Docker Hub using your `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
+- Runs `docker build` — builds the image with model baked in
+- Pushes the image to Docker Hub with two tags:
+  - `:latest` (always the most recent)
+  - `:abc1234` (the git commit SHA — unique ID for this exact version)
+- Logs into AWS ECR using your AWS credentials
+- Re-tags and pushes the same image to ECR
+
+**Job 3 — deploy-ec2 (~1-2 min, runs after build)**
+- Uses `appleboy/ssh-action` to SSH into your EC2 instance
+- Runs `git pull origin main` to get the latest code
+- Runs `pip install -r requirements_docker.txt`
+- Runs `sudo supervisorctl restart pune_api` to restart the API process
+- Runs `curl -f http://localhost:8000/health` to verify it started
+
+**Job 4 — deploy-ecs (~1 min, runs after build)**
+- Configures AWS credentials
+- Reads `deployment/ecs/task-definition.json` and replaces the container
+  image URL with the new image SHA from this build
+- Calls the ECS API to register a new task definition revision
+- Calls the ECS API to force a new deployment of the service
+- Prints the current running/desired task counts
+- *(Does NOT wait for stability — ECS handles the rolling update independently)*
+
+**Job 5 — deploy-eks (~1-3 min, runs after build)**
+- Configures AWS credentials and kubectl
+- Runs `kubectl set image deployment/pune-api pune-api=ECR_IMAGE:SHA`
+  This tells Kubernetes: "replace pods with this new image"
+- Runs `kubectl rollout status --timeout=300s || true`
+  Watches the rollout for up to 5 minutes. The `|| true` means if it times
+  out, the job still passes — the rollout continues on the cluster.
+- Prints pod and service status
+
+**Job 6 — notify (always runs, even if other jobs fail)**
+- Checks the result of jobs 3, 4, 5
+- Prints a summary table in the log
+- Sends a Slack message if `SLACK_WEBHOOK_URL` secret is set
+
+---
+
+### Why the URL Was Live While GitHub Actions Showed Failure
+
+This is an important concept for engineers to understand.
+
+GitHub Actions is a **watcher** — it fires commands at AWS/Kubernetes and
+optionally waits for a response. The actual workload runs on AWS infrastructure
+completely independently of GitHub Actions.
+
+When `kubectl rollout status` times out at 300 seconds, it means the
+**watcher** gave up waiting. It does NOT mean the rollout failed. Kubernetes
+continued the rollout on the cluster and completed it successfully minutes
+later. The old pods kept serving traffic throughout. The URL never went down.
+
+**Analogy:** You order a parcel and track it online. The tracking website
+times out. The parcel is still being delivered — you just can't see the
+status anymore.
+
+The ECS "not in state servicesStable" error has the same explanation.
+`wait-for-service-stability: false` tells GitHub Actions to fire the
+deployment and move on immediately without waiting for confirmation.
+
+---
+
+## 12. All Issues Faced and Fixes Applied
 
 ### Issue 1 — MLflow `file://` URI Fails on Windows
-
-**Error:**
-```
-MlflowException: Could not find a suitable backend for tracking URI file://C:/Users/...
-```
-
-**Why it happened:** MLflow's `file://` URI parser expects POSIX paths. Windows drive letters (C:/) break the path parsing.
-
-**Fix:** Switch to SQLite backend in `train.py`:
-```python
-mlflow.set_tracking_uri("sqlite:///mlflow.db")
-```
-SQLite is a local file-based database that works identically on Windows and Linux.
-
-**Prevention:** Always use SQLite backend on Windows. Switch to PostgreSQL when deploying a shared MLflow server for a team.
+**Error:** `MlflowException: Could not find a suitable backend for tracking URI file://C:/...`
+**Cause:** MLflow's URI parser expects POSIX paths. Windows drive letters (C:/) break it.
+**Fix:** Use SQLite backend: `mlflow.set_tracking_uri("sqlite:///mlflow.db")`
+**Prevention:** Always use SQLite on Windows. Use PostgreSQL for a shared team server.
 
 ---
 
 ### Issue 2 — .venv Corrupted After Partial Install
-
-**Error:**
-```
-ModuleNotFoundError: No module named 'sklearn'
-```
-or
-```
-No module named 'pip'
-```
-
-**Why it happened:** pip install was interrupted mid-package (disk space ran out), leaving the venv in an inconsistent state.
-
-**Fix:** Delete and recreate from scratch:
+**Error:** `ModuleNotFoundError` or `No module named 'pip'`
+**Cause:** pip install was interrupted (disk space ran out mid-package).
+**Fix:**
 ```powershell
 Remove-Item -Recurse -Force .venv
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install --upgrade pip
 pip install -r requirements.txt
 ```
-
-**Prevention:** Ensure at least 3GB free disk space before running `pip install -r requirements.txt`.
+**Prevention:** Ensure 3GB+ free disk space before installing.
 
 ---
 
 ### Issue 3 — Disk Space Ran Out During pip Install
-
-**Error:**
-```
-OSError: [Errno 28] No space left on device
-```
-
-**Why it happened:** Multiple large installer files (Anaconda, VMware, Tableau — 500MB-3GB each) had accumulated in `C:\Users\admin\Downloads`.
-
-**Fix:** Deleted duplicate large files from Downloads folder, freed ~8GB. Recreated `.venv` and retried.
-
-**Prevention:**
+**Error:** `OSError: [Errno 28] No space left on device`
+**Cause:** Large installer files accumulated in Downloads folder.
+**Fix:** Delete large unused files from Downloads. Free at least 3GB.
 ```powershell
-# Find largest files in Downloads
-Get-ChildItem $env:USERPROFILE\Downloads |
-  Sort-Object Length -Descending |
-  Select-Object Name, @{N="SizeMB";E={[math]::Round($_.Length/1MB,1)}} |
-  Select-Object -First 20
+Get-ChildItem $env:USERPROFILE\Downloads | Sort-Object Length -Descending | Select-Object -First 20 Name,Length
 ```
+**Prevention:** Audit Downloads folder before any large install.
 
 ---
 
 ### Issue 4 — pyenv Not Active After Installation
-
-**Error:**
-```powershell
-python --version
-# Python 3.8.10  (wrong — should be 3.10.11)
-```
-
-**Why it happened:** pyenv's shim directory was not in PATH for the current terminal session.
-
-**Fix:**
-```powershell
-pyenv global 3.10.11
-# Then close and reopen the terminal
-python --version
-# Python 3.10.11
-```
-
-**Prevention:** After installing pyenv-win, always open a new PowerShell window before using `python`.
+**Error:** `python --version` shows 3.8 instead of 3.10
+**Cause:** pyenv shim directory not in PATH for current terminal session.
+**Fix:** `pyenv global 3.10.11` → close terminal → open new terminal.
+**Prevention:** Always open a fresh terminal after installing pyenv-win.
 
 ---
 
 ### Issue 5 — Google Colab Cannot Upload Folders
-
-**Why it happened:** Colab's file upload UI only accepts individual files, not directory trees.
-
-**Fix:** Compress the project into a ZIP file and upload:
-```powershell
-# In Windows Explorer: right-click the project folder → Send to → Compressed (zipped) folder
-# Or in PowerShell:
-Compress-Archive -Path pune_real_estate_mlops -DestinationPath project.zip
-```
-In Colab:
+**Cause:** Colab file picker accepts only individual files, not directory trees.
+**Fix:** Compress to ZIP → upload ZIP → extract in Colab:
 ```python
 !unzip project.zip -d /content/
 ```
 
 ---
 
-### Issue 6 — ngrok Requires Account
-
-**Error:** `ngrok.exceptions.PyngrokError: ngrok authtoken required`
-
-**Why it happened:** ngrok changed policy to require free account registration for any tunnel usage.
-
-**Fix:** Used `localtunnel` instead which requires no account:
+### Issue 6 — ngrok Requires Account Registration
+**Cause:** ngrok changed policy to require free account for any tunnel.
+**Fix:** Use `localtunnel` (no account required):
 ```bash
 npm install -g localtunnel
 lt --port 8000
@@ -1135,407 +1750,267 @@ lt --port 8000
 
 ---
 
-### Issue 7 — GitHub Actions: `secrets` Context in `if` Condition
-
-**Error:**
-```
-Unrecognized named-value: 'secrets'. Located at position 1 within expression: secrets.SLACK_WEBHOOK_URL != ''
-```
-
-**Why it happened:** GitHub Actions does not allow the `secrets` context inside `if:` expressions for security reasons — it would reveal whether a secret is set.
-
-**Fix:** Removed the `if` condition and added `continue-on-error: true` to the Slack step instead:
+### Issue 7 — GitHub Actions: `secrets` in `if` Condition
+**Error:** `Unrecognized named-value: 'secrets'`
+**Cause:** GitHub Actions blocks `secrets.X` in `if:` expressions for security.
+**Fix:** Remove the `if` condition. Add `continue-on-error: true` to the step instead.
 ```yaml
 - name: Send Slack notification
-  continue-on-error: true    # silently skips if SLACK_WEBHOOK_URL is not set
+  continue-on-error: true
   uses: slackapi/slack-github-action@v1.26.0
 ```
 
 ---
 
 ### Issue 8 — Docker Image Built Without the Model File
-
-**Symptom:**
-```json
-{"status":"degraded","model_loaded":false}
-```
-API was running on ECS and EKS but predictions returned 500 Internal Server Error.
-
-**Why it happened:** `models/best_model.pkl` was listed in `.gitignore`. GitHub Actions checked out the code, built the Docker image with `COPY . .` — but the model was never in the git repository, so it was never copied into the image.
-
-**Fix:** In the `build` job of the workflow, added steps to install ML packages and train the model **before** the Docker build, so the freshly trained model is present when `COPY . .` runs:
+**Symptom:** `{"status":"degraded","model_loaded":false}`
+**Cause:** `models/best_model.pkl` was in `.gitignore`. GitHub Actions checked out
+code without it. The Docker image was built without the model.
+**Fix:** In the build job, add steps to train the model before Docker build:
 ```yaml
 - name: Install ML dependencies and train model
   run: |
     pip install pandas numpy scikit-learn==1.7.2 scipy joblib openpyxl mlflow
     python src/data/preprocess.py
     MLFLOW_TRACKING_URI="sqlite:///mlflow.db" python src/models/train.py
-
-- name: Verify model file exists before Docker build
-  run: ls -lh models/best_model.pkl
 ```
-
-**Why not just commit the model file?** Model files are binary blobs that grow git history and slow every clone. Training the model in CI ensures the packaged model always matches the current code and data.
 
 ---
 
-### Issue 9 — IAM User Cannot Attach Its Own Policies
-
-**Error:**
-```
-An error occurred (AccessDenied): User Prince is not authorized to perform: iam:AttachUserPolicy
-```
-
-**Why it happened:** The user `Prince` only had `IAMReadOnlyAccess`. Read-only means you can list/describe IAM resources but cannot modify them — including your own policies.
-
-**Fix:** Used the AWS **root account** (the email/password used to create the AWS account) to add the required policies. Root account has unrestricted access to all IAM operations.
-
-**How to access root account:**
-1. Go to https://console.aws.amazon.com
-2. Click "Sign in to a different account" → "Root user email address"
-3. Enter the account email address → Next
-4. Enter root password
+### Issue 9 — IAM User Cannot Modify Its Own Policies
+**Error:** `AccessDenied: not authorized to perform: iam:AttachUserPolicy`
+**Cause:** User only had `IAMReadOnlyAccess` — cannot modify IAM, including self.
+**Fix:** Use the **root account** (the AWS account creation email/password) to
+add policies. Root account has unrestricted IAM access.
+**How to login as root:**
+1. AWS Console → Sign in to a different account → Root user email
+2. Enter account email and root password
 
 ---
 
-### Issue 10 — IAM Policy Quota Exceeded (10 Managed Policies Limit)
-
+### Issue 10 — IAM Managed Policy Quota Exceeded (10-Policy Limit)
 **Error:** "The selected policies exceed this account's quota"
-
-**Why it happened:** AWS limits IAM users to 10 managed policies. The user `Prince` already had exactly 10 policies attached and there was no room for the additional policies needed for EKS (IAMFullAccess, AWSCloudFormationFullAccess) and ECR (AmazonEC2ContainerRegistryFullAccess).
-
-**Fix:** Created an **inline policy** instead of managed policies. Inline policies are embedded directly in the user and are **not counted** toward the 10-policy limit.
-
-**How to add an inline policy (via root account):**
-1. AWS Console → IAM → Users → Prince
-2. **Permissions** tab → **Add permissions** → **Create inline policy**
-3. Click the **JSON** tab
-4. Paste:
+**Cause:** AWS limits IAM users to 10 managed policies. User already had 10.
+**Fix:** Create an **inline policy** instead — inline policies are not counted:
+1. AWS Console → IAM → Users → YOUR_IAM_USERNAME
+2. Permissions tab → Create inline policy → JSON tab
+3. Paste:
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["iam:*", "cloudformation:*", "ecr:*", "eks:*"],
+      "Action": ["iam:*","cloudformation:*","ecr:*","eks:*"],
       "Resource": "*"
     }
   ]
 }
 ```
-5. Policy name: `eksctl-ecr-permissions` → **Create policy**
+4. Policy name: `eksctl-ecr-permissions` → Create policy
 
 ---
 
-### Issue 11 — EKS Creation Fails: `iam:TagRole` Not Authorized
-
-**Error:**
-```
-CREATE_FAILED: User is not authorized to perform: iam:TagRole on resource: eksctl-pune-api-eks-cluster-ServiceRole
-```
-
-**Why it happened:** eksctl creates IAM roles during cluster setup and tags them for resource tracking. The `IAMReadOnlyAccess` policy does not include `iam:TagRole`.
-
-**Fix:** Adding the `eksctl-ecr-permissions` inline policy (which includes `iam:*`) resolved this. See Issue 10.
+### Issue 11 — EKS Fails: `iam:TagRole` Not Authorized
+**Error:** `CREATE_FAILED: User is not authorized to perform: iam:TagRole`
+**Cause:** `IAMReadOnlyAccess` does not include `iam:TagRole` which eksctl needs.
+**Fix:** The inline policy from Issue 10 (includes `iam:*`) resolves this.
 
 ---
 
 ### Issue 12 — EKS CloudFormation Stack Already Exists
-
-**Error:**
-```
-AlreadyExistsException: Stack [eksctl-pune-api-eks-cluster] already exists
-```
-
-**Why it happened:** The first EKS creation attempt failed partway through (due to the `iam:TagRole` error). eksctl left a `ROLLBACK_COMPLETE` CloudFormation stack behind. When we retried, the stack name conflicted.
-
+**Error:** `AlreadyExistsException: Stack [eksctl-pune-api-eks-cluster] already exists`
+**Cause:** Previous failed EKS creation left a `ROLLBACK_COMPLETE` stack behind.
 **Fix:**
 ```powershell
-aws cloudformation delete-stack --stack-name eksctl-pune-api-eks-cluster --region us-east-1
+aws cloudformation delete-stack --stack-name eksctl-pune-api-eks-cluster
 Start-Sleep -Seconds 30
-# Confirm it's gone:
-aws cloudformation describe-stacks --stack-name eksctl-pune-api-eks-cluster 2>&1
-# Should show: Stack does not exist
+# Then retry eksctl create cluster
 ```
-Then retry `eksctl create cluster`.
 
 ---
 
-### Issue 13 — Docker Desktop Not Starting
-
-**Error:**
-```
-Error response from daemon: Docker Desktop is unable to start
-```
-
-**Why it happened:** Docker Desktop had an internal state issue (possibly from a previous crash or incomplete update).
-
-**Impact:** Negligible — the Docker image push to ECR was handled entirely by GitHub Actions, which has its own Docker environment. Local Docker Desktop was not required for production deployment.
-
-**Fix for local use:** Task Manager → End Task on all Docker processes → Reopen Docker Desktop.
+### Issue 13 — Docker Desktop Fails to Start
+**Error:** `Error response from daemon: Docker Desktop is unable to start`
+**Cause:** Docker Desktop internal state issue (crash or incomplete update).
+**Impact:** No impact on production — GitHub Actions has its own Docker.
+**Fix for local use:** Task Manager → End all Docker processes → Reopen Docker Desktop.
 
 ---
 
-### Issue 14 — ECS Ingress Host Mismatch (404)
-
-**Error:** Nginx Ingress returned 404 when testing the EKS LoadBalancer URL.
-
-**Why it happened:** The `k8s/ingress.yaml` had `host: api.yourdomain.com`. Nginx Ingress only routes requests whose HTTP `Host` header matches the configured hostname. Since we accessed the URL directly (no domain), the `Host` header was the raw LoadBalancer hostname which didn't match `api.yourdomain.com`.
-
-**Fix:** Removed the `host:` field from the ingress rules to make it a catch-all:
+### Issue 14 — Nginx Ingress Returns 404
+**Cause:** `k8s/ingress.yaml` had `host: api.yourdomain.com`. Nginx only routes
+requests whose `Host` HTTP header matches — raw LoadBalancer URL didn't match.
+**Fix:** Remove the `host:` field to make the ingress a catch-all:
 ```yaml
 rules:
-  - http:         # no host field = matches any hostname
+  - http:           # no host = matches any hostname
       paths:
         - path: /
 ```
 
 ---
 
-### Issue 15 — ECS Stuck on "Resource is not in the state servicesStable"
-
-**Error:**
-```
-Error: Resource is not in the state servicesStable
-```
-
-**Why it happened:** The GitHub Actions step had `wait-for-service-stability: true`. During a rolling ECS deployment, new tasks are starting and old tasks are draining — ECS is not "stable" during this window. The action polled ECS repeatedly and eventually hit a timeout because the stabilisation took longer than expected.
-
-**Critical insight:** The URL was live and serving traffic throughout. Old tasks kept handling requests while new tasks started. GitHub Actions was just watching the process, not controlling it.
-
-**Fix:** Set `wait-for-service-stability: false`. GitHub Actions now fires the deployment and immediately verifies the task count via CLI, then moves on. ECS completes the rollout independently:
-```yaml
-wait-for-service-stability: false
-```
+### Issue 15 — ECS Stuck: "Resource is not in the state servicesStable"
+**Cause:** `wait-for-service-stability: true` — GitHub Actions kept polling ECS
+during the rolling update window. ECS was not "stable" because it was mid-rollout.
+The URL was live throughout because old tasks kept serving traffic.
+**Fix:** Set `wait-for-service-stability: false`
 
 ---
 
 ### Issue 16 — EKS Rollout Status Timeout
-
-**Error:**
-```
-error: timed out waiting for the condition
-Error: Process completed with exit code 1
-```
-
-**Why it happened:** `kubectl rollout status --timeout=180s` — pulling a 1.8GB Docker image from ECR takes 2-4 minutes depending on node network speed. 180 seconds was not always enough.
-
-**Critical insight:** Same as Issue 15 — the URL was live. The rollout continued on the cluster and completed successfully. GitHub Actions was just the watcher.
-
-**Fix:** Two changes:
+**Error:** `error: timed out waiting for the condition`
+**Cause:** Pulling a 1.8GB image from ECR took longer than 180 seconds.
+**Fix:**
 ```bash
 kubectl rollout status deployment/pune-api -n pune-api --timeout=300s || true
 ```
-- Increased timeout to 300 seconds (5 minutes)
-- Added `|| true` — if it still times out, the shell returns exit 0 so GitHub Actions marks the step as passed
+The `|| true` means the step passes even if the watcher times out.
+The rollout continues and completes on the cluster regardless.
 
 ---
 
-### Issue 17 — Contributor Showing as "prince" Instead of "SHADRACK NAKOBA"
-
-**Why it happened:** The initial git config had `user.name = prince`. All commits were authored as `prince <shadrack.n159@gmail.com>`. GitHub links commits to a user profile via the author email, but the name displayed comes from the commit author field.
-
-**Fix:** Rewrote all commit history using `git filter-branch`:
+### Issue 17 — Monitoring Dashboards Show "Site Not Found"
+**Cause:** Prometheus and Grafana were `ClusterIP` services — internal only,
+no public URL.
+**Fix:** Change both services to `LoadBalancer` type:
 ```bash
+kubectl patch svc prometheus -n pune-api -p '{"spec":{"type":"LoadBalancer"}}'
+kubectl patch svc grafana    -n pune-api -p '{"spec":{"type":"LoadBalancer"}}'
+```
+Wait 60-90 seconds for AWS to provision Network Load Balancers.
+
+---
+
+### Issue 18 — GitHub Shows Wrong Contributor Name
+**Cause:** Initial git commits had `user.name` set to a wrong name. All commits
+were re-authored using `git filter-branch` with the correct name and email.
+The GitHub contributor cache takes time to update after a force push.
+**Fix:**
+```bash
+git config user.name "YOUR FULL NAME"
+git config user.email "YOUR_EMAIL"
+
+# Rewrite all commit history
 FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --env-filter '
-export GIT_AUTHOR_NAME="SHADRACK NAKOBA"
-export GIT_AUTHOR_EMAIL="shadrack.n159@gmail.com"
-export GIT_COMMITTER_NAME="SHADRACK NAKOBA"
-export GIT_COMMITTER_EMAIL="shadrack.n159@gmail.com"
+export GIT_AUTHOR_NAME="YOUR FULL NAME"
+export GIT_AUTHOR_EMAIL="YOUR_EMAIL"
+export GIT_COMMITTER_NAME="YOUR FULL NAME"
+export GIT_COMMITTER_EMAIL="YOUR_EMAIL"
 ' -- --all
 git push origin main --force
 ```
-
-Also required: add `shadrack.n159@gmail.com` as a verified email in GitHub → Settings → Emails. GitHub uses the email to link commits to profiles. Without the email verified, commits don't appear in the contribution graph.
+Also verify `YOUR_EMAIL` is added and verified in GitHub → Settings → Emails.
+GitHub links commits to profiles by email address.
 
 ---
 
 ## 13. GitHub Secrets Reference
 
-Go to: **GitHub Repo → Settings → Secrets and variables → Actions → New repository secret**
+**Navigation:** GitHub Repo → Settings tab → Secrets and variables (left sidebar) → Actions → New repository secret
 
-| Secret Name | Value | Required For |
+| Secret Name | Value | Where to Find It |
 |---|---|---|
-| `DOCKERHUB_USERNAME` | Docker Hub username | build job |
-| `DOCKERHUB_TOKEN` | Docker Hub access token (not password) | build job |
-| `EC2_HOST` | `54.147.249.94` | deploy-ec2 job |
-| `EC2_SSH_KEY` | Full contents of `.pem` key file | deploy-ec2 job |
-| `AWS_ACCESS_KEY_ID` | IAM user access key | build (ECR), deploy-ecs, deploy-eks |
-| `AWS_SECRET_ACCESS_KEY` | IAM user secret key | build (ECR), deploy-ecs, deploy-eks |
-| `SLACK_WEBHOOK_URL` | Slack incoming webhook URL | notify job (optional) |
-
-**To get Docker Hub token:**
-hub.docker.com → username → Account Settings → Security → New Access Token → Read/Write
-
-**To get EC2_SSH_KEY:**
-```powershell
-Get-Content C:\Users\admin\Downloads\pune-api-key.pem | Set-Clipboard
-# Then paste into the GitHub secret value field
-# The value starts with -----BEGIN RSA PRIVATE KEY-----
-```
-
-**IAM permissions required for the AWS user:**
-The IAM user must have these permissions (via managed policies or inline policy):
-- `AmazonEC2FullAccess`
-- `AmazonECS_FullAccess`
-- `AmazonEC2ContainerRegistryFullAccess`
-- `AWSCloudFormationFullAccess`
-- `IAMFullAccess`
-- `CloudWatchFullAccess`
-
-If hitting the 10-policy limit, combine into one inline policy:
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{"Effect": "Allow", "Action": ["iam:*","cloudformation:*","ecr:*","eks:*"], "Resource": "*"}]
-}
-```
+| `DOCKERHUB_USERNAME` | Your Docker Hub username | hub.docker.com profile |
+| `DOCKERHUB_TOKEN` | Docker Hub access token | hub.docker.com → Account Settings → Security → New Access Token |
+| `EC2_HOST` | EC2 Elastic IP | EC2 Console → Elastic IPs |
+| `EC2_SSH_KEY` | Full `.pem` file contents | `Get-Content path\to\key.pem \| Set-Clipboard` |
+| `AWS_ACCESS_KEY_ID` | IAM user access key ID | IAM → Users → Security credentials → Create access key |
+| `AWS_SECRET_ACCESS_KEY` | IAM user secret key | Shown once when access key is created |
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook | Slack API → Your Apps → Incoming Webhooks (optional) |
 
 ---
 
-## 14. File Structure Reference
+## 14. Production Checklist
 
-```
-pune_real_estate_mlops/
-│
-├── data/
-│   ├── raw/
-│   │   ├── Pune_Real_Estate_Data.xlsx     ← 200 property listings, 18 columns
-│   │   └── data_cleaned.csv               ← secondary cleaned data source
-│   └── processed/
-│       └── pune_features.csv              ← 197 rows × 21 features (output of preprocess.py)
-│
-├── models/
-│   ├── best_model.pkl                     ← GBM pipeline (imputer+scaler+model) — NOT in git
-│   ├── feature_columns.txt                ← 15 feature names the model expects
-│   └── pycaret_best.pkl                   ← AutoML winner (optional)
-│
-├── notebooks/
-│   └── Pune_Real_Estate_EndToEnd_ML.ipynb ← Colab experiment notebook
-│
-├── src/
-│   ├── data/preprocess.py                 ← data cleaning and feature engineering
-│   ├── models/train.py                    ← trains 5 models, MLflow tracking, saves best
-│   ├── models/pycaret_train.py            ← AutoML with PyCaret
-│   └── api/
-│       ├── fastapi_app.py                 ← production FastAPI application
-│       ├── flask_app.py                   ← alternative lightweight API
-│       └── middleware.py                  ← Prometheus metrics + JSON logging
-│
-├── deployment/
-│   ├── docker/
-│   │   ├── Dockerfile                     ← production container build instructions
-│   │   └── docker-compose.yml             ← local: API + MLflow containers
-│   └── ecs/
-│       ├── task-definition.json           ← ECS Fargate task (cpu:512, memory:1024)
-│       └── ecs-trust-policy.json          ← IAM trust policy for ECS roles
-│
-├── k8s/
-│   ├── namespace.yaml                     ← pune-api namespace
-│   ├── configmap.yaml                     ← non-secret environment variables
-│   ├── secret.yaml                        ← API_KEY (base64, replace before applying)
-│   ├── deployment.yaml                    ← 3 replicas, rolling update, probes
-│   ├── service.yaml                       ← ClusterIP service on port 80
-│   ├── ingress.yaml                       ← Nginx catch-all ingress
-│   ├── hpa.yaml                           ← HPA: 2-10 pods at CPU>70% or memory>80%
-│   └── monitoring/
-│       ├── prometheus.yaml                ← Prometheus + RBAC for pod scraping
-│       └── grafana.yaml                   ← Grafana + Prometheus datasource
-│
-├── monitoring/
-│   ├── cloudwatch_setup.py                ← run once: creates CW dashboard + 3 alarms + SNS
-│   ├── prometheus_config.yaml             ← Prometheus scrape configuration
-│   └── grafana_dashboard.json             ← import-ready Grafana dashboard
-│
-├── NAKOBA_implementation/
-│   ├── E2E_MASTER_GUIDE.md               ← THIS FILE — complete implementation record
-│   ├── PROJECT_JOURNEY.md                ← technical deep-dive, tool breakdown
-│   ├── PROD_READY.md                     ← production checklist and hardening guide
-│   └── CONTINUATION.md                   ← step-by-step from local to live
-│
-├── tests/
-│   └── test_api.py                        ← FastAPI tests (health, predict, validation, batch)
-│
-├── .github/workflows/deploy.yml           ← 6-job CI/CD pipeline
-├── dvc.yaml                               ← DVC pipeline (preprocess → train → pycaret)
-├── requirements.txt                       ← full dev dependencies (includes PyCaret, Jupyter)
-├── requirements_docker.txt                ← production-only dependencies
-└── README.md                              ← project overview and quick start
-```
+Work through this list top-to-bottom. Check each item only when fully verified.
 
----
+### Prerequisites
+- [ ] Python 3.10 installed (`python --version`)
+- [ ] VS Code installed with project folder open
+- [ ] Git configured: `git config user.name` and `git config user.email`
+- [ ] Docker Desktop installed and running (whale icon in taskbar)
+- [ ] kubectl installed (`kubectl version --client`)
+- [ ] eksctl installed (`eksctl version`)
+- [ ] AWS CLI installed and configured (`aws sts get-caller-identity`)
+- [ ] `my_setup.txt` created with all placeholder values filled in
 
-## 15. Production Checklist for Organisations
+### Data and Model
+- [ ] Both raw files in `data/raw/`
+- [ ] `python src/data/preprocess.py` runs without error
+- [ ] `python src/models/train.py` runs and creates `models/best_model.pkl`
+- [ ] MLflow UI shows 5 model runs at localhost:5000
+- [ ] FastAPI starts locally at localhost:8000/docs
 
-Use this checklist when deploying to a new organisation's AWS account.
+### Docker
+- [ ] `docker build` completes without error
+- [ ] `docker run` + health check returns `{"status":"ok","model_loaded":true}`
+- [ ] Image pushed to Docker Hub (both `:latest` and `:v1.0.0` tags)
 
-### Pre-Deployment
-- [ ] AWS account created and root account credentials secured
-- [ ] IAM user created with required permissions (see Section 13)
-- [ ] AWS CLI installed and configured (`aws configure`)
-- [ ] Docker Desktop installed and running
-- [ ] kubectl installed (`winget install Kubernetes.kubectl`)
-- [ ] eksctl installed and in PATH
-- [ ] Python 3.10 installed (pyenv recommended)
-- [ ] GitHub repository forked or cloned
-- [ ] All 6 GitHub Actions secrets added
+### GitHub
+- [ ] All code committed and pushed to `main` branch
+- [ ] All 6 secrets added to GitHub Actions
+- [ ] `.gitignore` includes `*.pem`, `.env`, `my_setup.txt`, `models/best_model.pkl`
 
-### Container Registry
-- [ ] ECR repository created (`pune-real-estate-api`)
-- [ ] Image scanning enabled on ECR
-- [ ] First push to ECR completed (via CI/CD)
+### AWS Account
+- [ ] IAM user created with required permissions
+- [ ] Inline policy `eksctl-ecr-permissions` added (iam:*, cloudformation:*, ecr:*, eks:*)
+- [ ] AWS CLI configured with IAM user credentials
+
+### ECR
+- [ ] ECR repository `pune-real-estate-api` created
+- [ ] `task-definition.json` updated with real account ID (not placeholder)
+- [ ] `k8s/deployment.yaml` updated with real account ID
+
+### EC2
+- [ ] EC2 instance launched (Ubuntu 22.04 LTS)
+- [ ] Elastic IP associated
+- [ ] Security group: port 22 from My IP only, port 80/443 from anywhere
+- [ ] SSH connection works from your machine
+- [ ] Docker installed on EC2 (`docker ps` works without sudo)
+- [ ] Nginx installed and running (`sudo systemctl status nginx`)
+- [ ] Supervisor installed, `pune_api` program created and RUNNING
+- [ ] `curl http://localhost/health` on EC2 returns ok
+- [ ] `http://YOUR_EC2_ELASTIC_IP/docs` opens in browser
 
 ### ECS Fargate
-- [ ] `ecsTaskExecutionRole` IAM role created
-- [ ] `ecsTaskRole` IAM role created
-- [ ] CloudWatch log group `/ecs/pune-api` created (30 day retention)
+- [ ] `ecsTaskExecutionRole` and `ecsTaskRole` IAM roles created
+- [ ] CloudWatch log group `/ecs/pune-api` created
 - [ ] ECS cluster `pune-api-cluster` created
-- [ ] Security groups created (ALB SG + task SG)
-- [ ] Application Load Balancer created
-- [ ] Target group created (type: IP, health check: /health)
-- [ ] HTTP listener on port 80 configured
-- [ ] Task definition registered with real account ID
-- [ ] ECS service created (desired: 2, minHealthy: 100%)
-- [ ] Both ECS tasks showing as healthy in target group
+- [ ] Security groups created (ALB SG and task SG)
+- [ ] Application Load Balancer created with target group (type: IP)
+- [ ] ECS service `pune-api-service` created (desired: 2)
+- [ ] Both ECS tasks show as RUNNING in the console
+- [ ] Both ALB targets show as healthy
+- [ ] `http://YOUR_ECS_ALB_DNS/health` returns ok
 
 ### EKS Kubernetes
-- [ ] eksctl installed
-- [ ] EKS cluster `pune-api-eks` created (takes 15-20 min)
-- [ ] kubectl configured (`aws eks update-kubeconfig`)
+- [ ] EKS cluster `pune-api-eks` created
+- [ ] `kubectl get nodes` shows 2 nodes, both Ready
 - [ ] All k8s manifests applied (namespace, configmap, secret, deployment, service, hpa)
 - [ ] Nginx Ingress Controller installed
-- [ ] Ingress applied and external LoadBalancer hostname obtained
-- [ ] All 3 pune-api pods showing `1/1 Running`
-- [ ] Prometheus pod showing `1/1 Running`
-- [ ] Grafana pod showing `1/1 Running`
-
-### CI/CD Validation
-- [ ] Push a small change to `main` branch
-- [ ] All 6 GitHub Actions jobs complete (green or yellow — not red)
-- [ ] New Docker image appears in Docker Hub with the commit SHA tag
-- [ ] New image appears in ECR with the commit SHA tag
-- [ ] EC2 Supervisor restarts the API process
-- [ ] ECS shows a new task definition revision
-- [ ] EKS shows a new rollout in `kubectl rollout history deployment/pune-api -n pune-api`
+- [ ] Ingress applied, `EXTERNAL-IP` assigned
+- [ ] All 5 pods in `pune-api` namespace show `1/1 Running`
+- [ ] `http://YOUR_EKS_LB_DNS/health` returns ok
 
 ### Monitoring
-- [ ] `python monitoring/cloudwatch_setup.py --alb-arn ... --email ...` run once
-- [ ] CloudWatch SNS email subscription confirmed
-- [ ] CloudWatch dashboard visible in console
+- [ ] Grafana LoadBalancer URL obtained and accessible at port 3000
+- [ ] Prometheus LoadBalancer URL obtained and accessible at port 9090
 - [ ] Grafana dashboard imported from `monitoring/grafana_dashboard.json`
-- [ ] Prometheus scraping API metrics (test: `rate(http_requests_total[5m])` returns data)
+- [ ] CloudWatch setup script run, SNS email confirmed
+- [ ] CloudWatch dashboard visible in AWS Console
+
+### CI/CD
+- [ ] Push a small change to `main` and watch Actions page
+- [ ] All 6 jobs complete without red failures
+- [ ] New image appears in Docker Hub with commit SHA tag
+- [ ] EC2 Supervisor restarts cleanly
+- [ ] ECS shows updated deployment
+- [ ] EKS shows new rollout in `kubectl rollout history deployment/pune-api -n pune-api`
 
 ### Final Verification
-- [ ] `GET /health` returns `{"status":"ok","model_loaded":true}` on ALL three deployments
-- [ ] `POST /predict` returns a price prediction on all three deployments
-- [ ] `POST /predict` with `area_sqft: -1` returns HTTP 422 (validation working)
-- [ ] `POST /predict/batch` with 101 items returns HTTP 400 (batch limit working)
-- [ ] Swagger UI loads at `/docs` on all three deployments
-- [ ] Prometheus metrics visible at `/metrics` endpoint
-- [ ] GitHub contributor shows correct name
-
----
-
-*This document reflects the complete implementation as of June 2026.*
-*Repository: https://github.com/SHADRACK-NAKOBA/pune_real_estate_mlops*
-*AWS Account: 211125741068 | Region: us-east-1*
+- [ ] `GET /health` → `{"status":"ok","model_loaded":true}` on all 3 deployments
+- [ ] `POST /predict` → returns predicted price on all 3 deployments
+- [ ] `POST /predict` with invalid input → returns HTTP 422
+- [ ] GitHub contributor widget shows only your name
