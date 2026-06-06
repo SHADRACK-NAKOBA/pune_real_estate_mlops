@@ -29,7 +29,7 @@ spec:
         - name: pune-api
           # Replace AWS_ACCOUNT_ID and AWS_REGION with real values,
           # or let GitHub Actions patch this via kubectl set image.
-          image: AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/pune-real-estate-api:latest
+          image: 211125741068.dkr.ecr.us-east-1.amazonaws.com/pune-real-estate-api:latest
           ports:
             - containerPort: 8000
           envFrom:
