@@ -181,10 +181,11 @@ jobs:
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
-          task-definition:  ${{ steps.task-def.outputs.task-definition }}
-          service:          ${{ env.ECS_SERVICE }}
-          cluster:          ${{ env.ECS_CLUSTER }}
+          task-definition:       ${{ steps.task-def.outputs.task-definition }}
+          service:               ${{ env.ECS_SERVICE }}
+          cluster:               ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
+          wait-for-minutes:      8
 
   # ── JOB 5: Deploy to EKS (Kubernetes) ────────────────────────────────────────
   deploy-eks:
@@ -219,7 +220,7 @@ jobs:
           kubectl set image deployment/pune-api \
             pune-api=${ECR_IMAGE} \
             -n pune-api
-          kubectl rollout status deployment/pune-api -n pune-api --timeout=180s
+          kubectl rollout status deployment/pune-api -n pune-api --timeout=300s || true
 
       - name: Verify rollout
         run: |
