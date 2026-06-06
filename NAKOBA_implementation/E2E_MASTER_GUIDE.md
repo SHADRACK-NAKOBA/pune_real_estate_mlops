@@ -1906,6 +1906,139 @@ GitHub links commits to profiles by email address.
 
 ---
 
+### Issue 19 — Prometheus Target Shows DOWN: `/metrics` Returns 404
+
+**Symptom:**
+- Grafana panels all show "No data"
+- Prometheus → Status → Targets shows job `pune-api` as **DOWN**
+- Error: `server returned HTTP status 404 Not Found` for `/metrics` on port 8000
+
+**Root cause (3 compounding problems):**
+
+**Problem 1 — Missing packages in `requirements.txt`**
+The Dockerfile runs `pip install -r requirements.txt`. The packages
+`prometheus-fastapi-instrumentator` and `python-json-logger` were listed
+only in `requirements_docker.txt`, not in `requirements.txt`. The Docker image
+was therefore built without them. When the container started, the import failed.
+
+**Problem 2 — Silent failure via `try/except ImportError`**
+`fastapi_app.py` wrapped the middleware import in:
+```python
+try:
+    from src.api.middleware import setup_middleware
+    _HAS_MIDDLEWARE = True
+except ImportError:
+    _HAS_MIDDLEWARE = False
+```
+When the import failed (package missing), `_HAS_MIDDLEWARE` was set to `False`
+and `setup_middleware()` was never called. No error was logged. The app started
+normally — but `/metrics` was never registered, so every request to it returned 404.
+
+**Problem 3 — Logging failure killed Prometheus**
+`middleware.py` imported both `prometheus-fastapi-instrumentator` AND
+`python-json-logger` at the top of the same file. Because they were bundled
+together, if either package was missing the entire middleware import failed —
+taking both logging AND Prometheus metrics down with it.
+
+**Fix applied:**
+
+**Step 1 — Add missing packages to `requirements.txt`:**
+```
+# Add these two lines to requirements.txt (not just requirements_docker.txt)
+prometheus-fastapi-instrumentator>=6.1.0
+python-json-logger>=2.0.7
+```
+
+**Step 2 — Wire Prometheus directly in `fastapi_app.py`, unconditionally:**
+```python
+# At the top — direct import, no try/except
+from prometheus_fastapi_instrumentator import Instrumentator
+
+# After app = FastAPI() and middleware setup:
+Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    excluded_handlers=["/health", "/metrics"],
+).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+# Logging kept optional and separate — its failure cannot affect /metrics
+try:
+    from src.api.middleware import setup_logging
+    setup_logging(app)
+except Exception:
+    pass
+```
+
+**Step 3 — Separate Prometheus from logging in `middleware.py`:**
+Remove all Prometheus code from `middleware.py`. Keep only:
+```python
+def setup_logging(app):
+    app.add_middleware(RequestLoggingMiddleware)
+```
+
+**Step 4 — Add static scrape target to Prometheus ConfigMap as fallback:**
+The annotation-based pod discovery works only when pods are annotated AND
+Prometheus RBAC is configured. Add a guaranteed static target alongside it:
+```yaml
+scrape_configs:
+  # Guaranteed fallback — scrapes via Kubernetes Service
+  - job_name: pune-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - pune-api-service.pune-api.svc.cluster.local:80
+
+  # Annotation-based pod discovery (supplementary)
+  - job_name: pune-api-pods
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [pune-api]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      ...
+```
+
+**Step 5 — Apply and redeploy:**
+```powershell
+# Push the fixes — GitHub Actions rebuilds Docker image and deploys to EKS
+git add requirements.txt src/api/fastapi_app.py src/api/middleware.py k8s/monitoring/prometheus.yaml
+git commit -m "fix: expose /metrics endpoint so Prometheus targets show UP"
+git push origin main
+
+# Immediately apply updated Prometheus ConfigMap without waiting for CI/CD
+kubectl apply -f k8s/monitoring/prometheus.yaml
+kubectl rollout restart deployment/prometheus -n pune-api
+```
+
+Wait ~10-15 minutes for GitHub Actions to build and push the new Docker image.
+The deploy-eks job will automatically update the pods via `kubectl set image`.
+
+**Verify the fix:**
+```powershell
+# 1. Confirm /metrics returns 200
+curl -s -o /dev/null -w "%{http_code}" http://YOUR_EKS_LB_DNS/metrics
+# Expected: 200
+
+# 2. Confirm metrics text is returned
+curl -s http://YOUR_EKS_LB_DNS/metrics | findstr "http_requests_total"
+# Expected: http_requests_total{...} 0.0
+
+# 3. Open Prometheus targets page in browser
+# http://YOUR_PROMETHEUS_LB_DNS:9090/targets
+# Expected: pune-api job shows green "UP"
+```
+
+**Prevention:** Always add monitoring packages to the same `requirements.txt`
+that the Dockerfile uses. Never hide a metric setup call inside an optional
+import block — if Prometheus fails to load, the failure should be loud and
+visible, not silent.
+
+---
+
 ## 13. GitHub Secrets Reference
 
 **Navigation:** GitHub Repo → Settings tab → Secrets and variables (left sidebar) → Actions → New repository secret
