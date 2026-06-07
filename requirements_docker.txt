@@ -16,5 +16,5 @@ xlrd>=2.0.1
 python-dotenv>=1.0.0
 
 # Monitoring
-prometheus-fastapi-instrumentator>=6.1.0
+prometheus-client>=0.17.0
 python-json-logger>=2.0.7

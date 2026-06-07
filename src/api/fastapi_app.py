@@ -1,10 +1,5 @@
-"""
-STEP 3: FastAPI Deployment
-Pune Real Estate Price Prediction API
-Run: uvicorn src.api.fastapi_app:app --reload --port 8000
-"""
-
 import os
+import time
 import joblib
 import numpy as np
 import pandas as pd
@@ -12,7 +7,19 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_fastapi_instrumentator import Instrumentator
+from fastapi.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+
+REQUEST_COUNT = Counter(
+    "http_requests_total", "Total HTTP requests",
+    ["method", "endpoint", "status_code"]
+)
+REQUEST_DURATION = Histogram(
+    "http_request_duration_seconds", "HTTP request duration in seconds",
+    ["method", "endpoint"]
+)
 
 # ─────────────────────────────────────────────
 # LOAD MODEL
@@ -86,12 +93,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Prometheus metrics — /metrics endpoint
-Instrumentator(
-    should_group_status_codes=True,
-    should_ignore_untemplated=True,
-    excluded_handlers=["/health", "/metrics"],
-).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+class _MetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+        response = await call_next(request)
+        path = request.url.path
+        if path not in ("/health", "/metrics"):
+            REQUEST_COUNT.labels(
+                method=request.method,
+                endpoint=path,
+                status_code=response.status_code,
+            ).inc()
+            REQUEST_DURATION.labels(method=request.method, endpoint=path).observe(
+                time.time() - start
+            )
+        return response
+
+
+app.add_middleware(_MetricsMiddleware)
 
 # Optional structured JSON request logging (fails silently if package missing)
 try:
@@ -108,6 +128,11 @@ async def startup_event():
         print("✅  Model loaded successfully.")
     except FileNotFoundError as e:
         print(f"⚠️  {e}")
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Monitoring"])
