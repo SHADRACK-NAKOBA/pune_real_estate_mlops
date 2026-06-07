@@ -2039,6 +2039,368 @@ visible, not silent.
 
 ---
 
+### Issue 20 — CrashLoopBackOff After Dockerfile Hardening
+
+**Symptom:**
+- After committing a hardened Dockerfile (non-root user, `python:3.10-slim-bookworm`,
+  switched from `requirements.txt` to `requirements_docker.txt`), GitHub Actions
+  built a new image and EKS rolled out a new pod
+- New pod immediately entered `CrashLoopBackOff` with 240+ restarts
+- Old pods (`747d77979f` ReplicaSet) kept running — Kubernetes preserved them
+  because no new pod ever passed the readiness probe
+- Multiple old failed ReplicaSets visible: `kubectl get rs -n pune-api` showed
+  12 dead ReplicaSets from prior failed rollouts
+
+**Error from `kubectl logs <crashing-pod> -n pune-api`:**
+```
+Traceback (most recent call last):
+  ...
+  File "/app/src/api/fastapi_app.py", line 15, in <module>
+    from prometheus_fastapi_instrumentator import Instrumentator
+ModuleNotFoundError: No module named 'prometheus_fastapi_instrumentator'
+```
+
+**Root cause (2 compounding problems):**
+
+**Problem 1 — `prometheus-fastapi-instrumentator` was never installable in Docker**
+Running `kubectl exec <running-pod> -- pip show prometheus-fastapi-instrumentator`
+returned `WARNING: Package(s) not found` — even on the pods that were running fine.
+The package had never been successfully installed in any Docker image throughout
+the entire project. Dependency conflict (likely with newer FastAPI/starlette
+versions) caused pip to silently fail on this package.
+
+**Problem 2 — Issue 19 code fix made the failure visible**
+Before Issue 19, `fastapi_app.py` wrapped the import in `try/except ImportError`,
+so the app started without prometheus and `/metrics` returned 404 silently.
+The Issue 19 fix changed the import to a hard top-level import with no guard:
+```python
+from prometheus_fastapi_instrumentator import Instrumentator  # line 15
+```
+When the Dockerfile commit triggered a new rollout, the new image also lacked the
+package — but now the hard import caused an immediate crash instead of silent failure.
+
+**Why old pods kept running:**
+Kubernetes rolling deployment only terminates old pods when new pods become `Ready`.
+Since every new pod crashed before passing the readiness probe (`/health`), the
+revision 9 pods (`747d77979f`) from 20h earlier stayed alive and kept serving
+traffic. This is correct Kubernetes rollout behaviour — no downtime for end users.
+
+**Commands run to diagnose:**
+```powershell
+# Check which image the crashing pod uses
+kubectl describe pod pune-api-69c58ccc44-7zlpz -n pune-api | grep Image:
+# Output: 211125741068.dkr.ecr.us-east-1.amazonaws.com/pune-real-estate-api:67ba5e2...
+
+# Check logs
+kubectl logs pune-api-69c58ccc44-7zlpz -n pune-api --tail=60
+# → ModuleNotFoundError: No module named 'prometheus_fastapi_instrumentator'
+
+# Verify the package is missing even from running pods
+kubectl exec -n pune-api pune-api-747d77979f-66v5t -- pip show prometheus-fastapi-instrumentator
+# → WARNING: Package(s) not found
+
+# Find the working revision
+kubectl rollout history deployment/pune-api -n pune-api
+# Revision 9 = pod-template-hash=747d77979f (the still-running good pods)
+```
+
+**Fix applied:**
+
+**Step 1 — Roll back to revision 9 (the last stable image):**
+```powershell
+# First attempt — undo went to revision 13, which was also crashing:
+kubectl rollout undo deployment/pune-api -n pune-api
+kubectl get po -n pune-api -l app=pune-api
+# Still had a CrashLoopBackOff pod (9f45dcc7c ReplicaSet)
+
+# Check all revisions to find the working one:
+for rev in 10 9 8 7; do
+  echo "=== Revision $rev ==="
+  kubectl rollout history deployment/pune-api -n pune-api --revision=$rev | grep -E "pod-template-hash|Image:"
+done
+# Revision 9: pod-template-hash=747d77979f → confirmed as the working image
+
+# Rollback to revision 9 specifically:
+kubectl rollout undo deployment/pune-api -n pune-api --to-revision=9
+kubectl get po -n pune-api -l app=pune-api
+# All 3 pods: 1/1 Running, no crashers
+```
+
+**Step 2 — Replace `prometheus-fastapi-instrumentator` with `prometheus-client`:**
+
+`prometheus-client` is the official Prometheus Python client (maintained by the
+Prometheus team). It has no FastAPI/starlette version dependencies and installs
+cleanly on any Python version.
+
+Changes to `src/api/fastapi_app.py`:
+```python
+# REMOVED:
+from prometheus_fastapi_instrumentator import Instrumentator
+
+Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    excluded_handlers=["/health", "/metrics"],
+).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+# ADDED — at the top of the file:
+import time
+from fastapi.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+
+REQUEST_COUNT = Counter(
+    "http_requests_total", "Total HTTP requests",
+    ["method", "endpoint", "status_code"]
+)
+REQUEST_DURATION = Histogram(
+    "http_request_duration_seconds", "HTTP request duration in seconds",
+    ["method", "endpoint"]
+)
+
+# ADDED — after app = FastAPI():
+class _MetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+        response = await call_next(request)
+        path = request.url.path
+        if path not in ("/health", "/metrics"):
+            REQUEST_COUNT.labels(
+                method=request.method,
+                endpoint=path,
+                status_code=response.status_code,
+            ).inc()
+            REQUEST_DURATION.labels(method=request.method, endpoint=path).observe(
+                time.time() - start
+            )
+        return response
+
+app.add_middleware(_MetricsMiddleware)
+
+# ADDED — /metrics endpoint (before /health):
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+```
+
+Changes to `requirements.txt` and `requirements_docker.txt`:
+```
+# REMOVED:
+prometheus-fastapi-instrumentator>=6.1.0
+
+# ADDED:
+prometheus-client>=0.17.0
+```
+
+**Step 3 — Push the fix:**
+```powershell
+git add src/api/fastapi_app.py requirements.txt requirements_docker.txt
+git commit -m "fix: replace prometheus-fastapi-instrumentator with prometheus-client"
+git push origin main
+# GitHub Actions rebuilds image → deploys to EKS → pods start cleanly
+```
+
+**Verify the fix after deployment:**
+```powershell
+# Watch new pods come up
+kubectl get po -n pune-api -l app=pune-api -w
+
+# Once Running, test /metrics returns actual metrics text (not 404)
+curl http://YOUR_EKS_LB_DNS/metrics
+# Expected output starts with:
+# # HELP http_requests_total Total HTTP requests
+# # TYPE http_requests_total counter
+# http_requests_total{...} 0.0
+
+# Prometheus targets page should now show UP
+# http://YOUR_PROMETHEUS_LB_DNS:9090/targets
+```
+
+**Prevention:** Never use a third-party FastAPI wrapper around prometheus-client
+when prometheus-client itself does the job. The wrapper adds a dependency chain
+that can silently fail. Hard imports (no try/except) are correct for required
+packages — they make failures visible immediately rather than hiding them.
+
+---
+
+## 15. AWS Resource Teardown (Stop All Billing)
+
+Run these commands in order to destroy all AWS resources. Each step must
+complete before the next. **This is irreversible.**
+
+### Phase 1 — Delete Kubernetes load balancers before destroying EKS
+Deleting the namespace first lets Kubernetes clean up the AWS load balancers
+it created for services of type `LoadBalancer`. If you skip this and delete
+the EKS cluster directly, the load balancers can be orphaned and continue
+accumulating charges.
+
+```powershell
+# Delete all kubernetes resources in the pune-api namespace
+# (releases the Grafana and Prometheus LoadBalancer IPs and the API LoadBalancer)
+kubectl delete namespace pune-api --grace-period=0 --force
+
+# Delete the nginx ingress controller namespace (releases the ingress ALB)
+kubectl delete namespace ingress-nginx --grace-period=0 --force
+
+# Wait ~2 minutes for AWS to release the load balancers, then verify none remain:
+aws elbv2 describe-load-balancers --region us-east-1 --query "LoadBalancers[].{Name:LoadBalancerName,DNS:DNSName}" --output table
+# Only the ECS ALB (pune-api-alb) should appear — EKS ones are gone
+```
+
+### Phase 2 — Delete EKS cluster (takes 15–20 minutes)
+`eksctl delete cluster` removes the control plane, all nodegroups, the eksctl-managed
+VPC, security groups, and CloudFormation stacks in one operation.
+
+```powershell
+eksctl delete cluster --name pune-api-eks --region us-east-1
+# This runs for 15–20 minutes — wait for "EKS cluster deleted" message
+```
+
+### Phase 3 — Delete ECS Fargate resources
+```powershell
+# Scale service to 0 tasks first (required before deletion)
+aws ecs update-service `
+  --cluster pune-api-cluster `
+  --service pune-api-service `
+  --desired-count 0 `
+  --region us-east-1
+
+# Delete the service
+aws ecs delete-service `
+  --cluster pune-api-cluster `
+  --service pune-api-service `
+  --force `
+  --region us-east-1
+
+# Delete the cluster
+aws ecs delete-cluster `
+  --cluster pune-api-cluster `
+  --region us-east-1
+```
+
+### Phase 4 — Delete ECS Application Load Balancer and target group
+```powershell
+# Find the ALB ARN
+$albArn = aws elbv2 describe-load-balancers `
+  --names pune-api-alb `
+  --query "LoadBalancers[0].LoadBalancerArn" `
+  --output text `
+  --region us-east-1 2>$null
+
+if ($albArn -and $albArn -ne "None") {
+    # Find and delete listener first
+    $listenerArn = aws elbv2 describe-listeners `
+      --load-balancer-arn $albArn `
+      --query "Listeners[0].ListenerArn" --output text --region us-east-1
+    aws elbv2 delete-listener --listener-arn $listenerArn --region us-east-1
+
+    # Delete the load balancer
+    aws elbv2 delete-load-balancer --load-balancer-arn $albArn --region us-east-1
+    Start-Sleep -Seconds 30
+}
+
+# Delete target group
+$tgArn = aws elbv2 describe-target-groups `
+  --names pune-api-tg `
+  --query "TargetGroups[0].TargetGroupArn" `
+  --output text `
+  --region us-east-1 2>$null
+
+if ($tgArn -and $tgArn -ne "None") {
+    aws elbv2 delete-target-group --target-group-arn $tgArn --region us-east-1
+}
+```
+
+### Phase 5 — Terminate EC2 instance and release Elastic IP
+```powershell
+# Find the instance ID
+$instanceId = aws ec2 describe-instances `
+  --filters "Name=tag:Name,Values=pune-real-estate-api" "Name=instance-state-name,Values=running,stopped" `
+  --query "Reservations[0].Instances[0].InstanceId" `
+  --output text `
+  --region us-east-1
+
+# Terminate the instance
+aws ec2 terminate-instances --instance-ids $instanceId --region us-east-1
+
+# Find and release the Elastic IP
+$allocId = aws ec2 describe-addresses `
+  --query "Addresses[0].AllocationId" `
+  --output text `
+  --region us-east-1
+
+# Wait for instance to terminate before releasing IP
+aws ec2 wait instance-terminated --instance-ids $instanceId --region us-east-1
+aws ec2 release-address --allocation-id $allocId --region us-east-1
+```
+
+### Phase 6 — Delete ECR repository (all images inside)
+```powershell
+aws ecr delete-repository `
+  --repository-name pune-real-estate-api `
+  --force `
+  --region us-east-1
+```
+
+### Phase 7 — Delete CloudWatch log groups
+```powershell
+aws logs delete-log-group --log-group-name /ecs/pune-api --region us-east-1
+# Delete any others you created (check AWS Console → CloudWatch → Log groups)
+```
+
+### Phase 8 — Delete IAM roles
+```powershell
+# Detach policies before deleting
+aws iam detach-role-policy `
+  --role-name ecsTaskExecutionRole `
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+aws iam delete-role --role-name ecsTaskExecutionRole
+
+# Repeat for ecsTaskRole and any other project-specific roles
+aws iam list-roles --query "Roles[?contains(RoleName, 'pune') || contains(RoleName, 'ecs')].RoleName" --output table
+```
+
+### Phase 9 — Delete security groups (after EKS cluster is deleted)
+```powershell
+# List security groups for this project
+aws ec2 describe-security-groups `
+  --filters "Name=group-name,Values=pune-*" `
+  --query "SecurityGroups[].{ID:GroupId,Name:GroupName}" `
+  --output table `
+  --region us-east-1
+
+# Delete each non-default security group
+# aws ec2 delete-security-group --group-id sg-xxxx --region us-east-1
+```
+
+### Phase 10 — Final billing check
+```powershell
+# Verify no load balancers remain
+aws elbv2 describe-load-balancers --region us-east-1 --query "LoadBalancers[].LoadBalancerName" --output table
+
+# Verify no EC2 instances running
+aws ec2 describe-instances `
+  --filters "Name=instance-state-name,Values=running" `
+  --query "Reservations[].Instances[].{ID:InstanceId,Type:InstanceType}" `
+  --output table `
+  --region us-east-1
+
+# Verify no EKS clusters
+aws eks list-clusters --region us-east-1
+
+# Verify no ECS clusters with running tasks
+aws ecs list-clusters --region us-east-1
+```
+
+Go to AWS Billing → Cost Explorer → check that no resources show ongoing hourly charges.
+The main billing items were: EKS control plane ($0.10/hr), EC2 nodes (~$0.023/hr each),
+EC2 instance, Elastic IP (free while associated, $0.005/hr when unassociated),
+and Load Balancers (~$0.008/hr + data).
+
+---
+
 ## 13. GitHub Secrets Reference
 
 **Navigation:** GitHub Repo → Settings tab → Secrets and variables (left sidebar) → Actions → New repository secret
