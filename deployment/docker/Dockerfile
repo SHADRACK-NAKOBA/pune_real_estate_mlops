@@ -1,25 +1,33 @@
-FROM python:3.10-slim
+FROM python:3.10-slim-bookworm
 
-# System deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl git && \
+# Apply all OS security patches, install only what is needed
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python dependencies first (layer cache)
-COPY requirements.txt .
+# Non-root user — reduces container attack surface
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
+
+# Install production dependencies
+# requirements_docker.txt is lighter than requirements.txt (no PyCaret/Jupyter)
+# and explicitly lists prometheus-fastapi-instrumentator
+COPY requirements_docker.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements_docker.txt
 
-# Copy source code
-COPY . .
+# Copy application source
+COPY src/ ./src/
+COPY models/ ./models/
 
-# Expose FastAPI port
+RUN chown -R appuser:appgroup /app
+USER appuser
+
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "src.api.fastapi_app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "src.api.fastapi_app:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "2", "--log-level", "info"]
